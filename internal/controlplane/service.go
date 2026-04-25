@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -46,7 +45,7 @@ type Service struct {
 	audit          []AuditEntry
 	registry       CapabilityRegistry
 	policy         PolicyEngine
-	fixture        map[string]map[string]any
+	adapters       AdapterRegistry
 	nextApprovalID int
 	approvalOrder  []string
 	approvals      map[string]ApprovalRequest
@@ -56,7 +55,7 @@ func NewService() *Service {
 	return &Service{
 		registry:       DefaultCapabilityRegistry(),
 		policy:         StaticPolicyEngine{},
-		fixture:        defaultFixtures(),
+		adapters:       DefaultAdapterRegistry(),
 		nextApprovalID: 1,
 		approvals:      map[string]ApprovalRequest{},
 	}
@@ -93,22 +92,8 @@ func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 }
 
 func (s *Service) executeAllowedTool(req ToolCallRequest, definition CapabilityDefinition, riskLevel string) ToolCallResponse {
-	key := definition.ID
-	result, ok := s.fixture[key]
-	if !ok {
-		return ToolCallResponse{
-			Status:    "error",
-			RiskLevel: riskLevel,
-			Reason:    fmt.Sprintf("No fixture for tool '%s'.", key),
-		}
-	}
-
-	return ToolCallResponse{
-		Status:    "success",
-		RiskLevel: riskLevel,
-		Provider:  definition.Provider,
-		Result:    result,
-	}
+	definition.RiskLevel = riskLevel
+	return s.adapters.Execute(definition, req)
 }
 
 func (s *Service) executeApprovedTool(req ToolCallRequest, approvalID string) ToolCallResponse {
@@ -124,23 +109,13 @@ func (s *Service) executeApprovedTool(req ToolCallRequest, approvalID string) To
 			Reason:    "Approved tool action is no longer registered.",
 		}
 	}
-	key := definition.ID
-	result, ok := s.fixture[key]
-	if !ok {
-		return ToolCallResponse{
-			Status:    "error",
-			RiskLevel: riskLevel,
-			Reason:    fmt.Sprintf("No fixture for tool '%s'.", key),
-		}
+	definition.RiskLevel = riskLevel
+	response := s.adapters.Execute(definition, req)
+	if response.Status != "success" {
+		return response
 	}
 	s.appendAudit(req, riskLevel, DecisionApprovedExecuted, approvalID)
-
-	return ToolCallResponse{
-		Status:    "success",
-		RiskLevel: riskLevel,
-		Provider:  definition.Provider,
-		Result:    result,
-	}
+	return response
 }
 
 func (s *Service) Audit() []AuditEntry {
@@ -308,104 +283,4 @@ func (s *Service) appendAudit(req ToolCallRequest, riskLevel string, decision st
 		Decision:          decision,
 		ApprovalRequestID: approvalRequestID,
 	})
-}
-
-func defaultFixtures() map[string]map[string]any {
-	return map[string]map[string]any{
-		"metrics.get_service_health": {
-			"status":                      "degraded",
-			"latency_p95_ms":              820,
-			"error_rate_percent":          7.8,
-			"baseline_error_rate_percent": 0.4,
-			"evidence":                    "5xx rate increased from 0.4% to 7.8% in the last 30 minutes.",
-			"source_url":                  "https://metrics.example.local/backend-prod",
-		},
-		"errors.get_recent_errors": {
-			"top_errors": []map[string]any{
-				{
-					"message":    "database connection timeout",
-					"count":      431,
-					"first_seen": "2026-07-09T09:42:00Z",
-				},
-			},
-			"evidence":   "Sentry shows 431 database connection timeout errors after the latest deploy.",
-			"source_url": "https://sentry.example.local/projects/backend-api/issues/123",
-		},
-		"deploy.get_recent_deploys": {
-			"deploys": []map[string]any{
-				{
-					"version":    "sha-abc123",
-					"started_at": "2026-07-09T09:38:00Z",
-					"status":     "succeeded",
-					"actor":      "github-actions",
-				},
-			},
-			"evidence":   "Deployment sha-abc123 completed four minutes before the error spike.",
-			"source_url": "https://github.com/acme/backend/actions/runs/1001",
-		},
-		"deploy.rollback": {
-			"rollback_id":     "rollback-123",
-			"target_revision": "sha-abc123",
-			"status":          "started",
-			"evidence":        "Mock rollback to sha-abc123 started after approval.",
-			"source_url":      "https://deploy.example.local/backend-prod/rollbacks/rollback-123",
-		},
-		"code_host.get_recent_changes": {
-			"changes": []map[string]any{
-				{
-					"pr":      456,
-					"title":   "Tune database pool defaults",
-					"files":   []string{"config/database.yaml"},
-					"summary": "Changed max_open_connections from 50 to 5.",
-				},
-			},
-			"evidence":   "Recent PR #456 reduced database pool size from 50 to 5.",
-			"source_url": "https://github.com/acme/backend/pull/456",
-		},
-		"runtime.get_workload_status": {
-			"pods_ready":             "5/8",
-			"restart_count_last_30m": 12,
-			"evidence":               "Three backend pods are not ready and restart count increased after deploy.",
-			"source_url":             "https://k8s.example.local/namespaces/prod/deployments/backend-api",
-		},
-		"docs.search_runbooks": {
-			"matches": []map[string]any{
-				{
-					"title":   "Backend database pool exhaustion",
-					"summary": "If DB timeouts rise after deploy, compare pool config and rollback config-only changes first.",
-				},
-			},
-			"evidence":   "Runbook recommends checking pool config and rolling back config-only changes for DB timeout spikes.",
-			"source_url": "https://docs.example.local/backend-oncall",
-		},
-		"code_host.create_draft_pr": {
-			"pr_number": 999,
-			"branch":    "majdoor/revert-db-pool-config",
-			"title":     "Draft: Revert backend database pool config",
-			"url":       "https://github.com/acme/backend/pull/999",
-			"evidence":  "Draft PR #999 created from validated patch artifact.",
-		},
-		"ci.get_checks": {
-			"status":     "passed",
-			"workflow":   "backend-ci.yml",
-			"commit_sha": "mock-sha-999",
-			"checks": []map[string]any{
-				{
-					"name":       "unit-tests",
-					"conclusion": "success",
-				},
-				{
-					"name":       "config-validation",
-					"conclusion": "success",
-				},
-			},
-			"evidence":   "GitHub Actions mock CI passed for draft PR #999.",
-			"source_url": "https://github.com/acme/backend/actions/runs/999",
-		},
-		"ci.get_logs": {
-			"summary":    "No failing CI logs. All mock checks passed.",
-			"evidence":   "CI logs contain no failures.",
-			"source_url": "https://github.com/acme/backend/actions/runs/999/logs",
-		},
-	}
 }

@@ -16,6 +16,8 @@ Owns:
 
 This repo now exposes the first real Tool Control Plane HTTP boundary for Majdoor. It uses mock adapters and an in-memory audit log while preserving the production API shape.
 
+Tool execution is routed through provider adapters. The current built-in provider is `mock`; future providers such as GitHub, Grafana, Datadog, Kubernetes, and Jira should implement the same adapter boundary instead of changing policy or approval logic.
+
 Planned stack:
 
 - Go service
