@@ -18,40 +18,47 @@ type ToolCallRequest struct {
 }
 
 type ToolCallResponse struct {
-	Status           string         `json:"status"`
-	RiskLevel        string         `json:"risk_level"`
-	Provider         string         `json:"provider,omitempty"`
-	Result           map[string]any `json:"result,omitempty"`
-	Reason           string         `json:"reason,omitempty"`
-	ApprovalRequired bool           `json:"approval_required,omitempty"`
+	Status            string         `json:"status"`
+	RiskLevel         string         `json:"risk_level"`
+	Provider          string         `json:"provider,omitempty"`
+	Result            map[string]any `json:"result,omitempty"`
+	Reason            string         `json:"reason,omitempty"`
+	ApprovalRequired  bool           `json:"approval_required,omitempty"`
+	ApprovalRequestID string         `json:"approval_request_id,omitempty"`
 }
 
 type AuditEntry struct {
-	At          string `json:"at"`
-	OrgID       string `json:"org_id"`
-	ActorUserID string `json:"actor_user_id"`
-	AgentRunID  string `json:"agent_run_id"`
-	ServiceID   string `json:"service_id"`
-	Environment string `json:"environment"`
-	Capability  string `json:"capability"`
-	Action      string `json:"action"`
-	RiskLevel   string `json:"risk_level"`
-	Decision    string `json:"decision"`
+	At                string `json:"at"`
+	OrgID             string `json:"org_id"`
+	ActorUserID       string `json:"actor_user_id"`
+	AgentRunID        string `json:"agent_run_id"`
+	ServiceID         string `json:"service_id"`
+	Environment       string `json:"environment"`
+	Capability        string `json:"capability"`
+	Action            string `json:"action"`
+	RiskLevel         string `json:"risk_level"`
+	Decision          string `json:"decision"`
+	ApprovalRequestID string `json:"approval_request_id,omitempty"`
 }
 
 type Service struct {
-	mu       sync.Mutex
-	audit    []AuditEntry
-	registry CapabilityRegistry
-	policy   PolicyEngine
-	fixture  map[string]map[string]any
+	mu             sync.Mutex
+	audit          []AuditEntry
+	registry       CapabilityRegistry
+	policy         PolicyEngine
+	fixture        map[string]map[string]any
+	nextApprovalID int
+	approvalOrder  []string
+	approvals      map[string]ApprovalRequest
 }
 
 func NewService() *Service {
 	return &Service{
-		registry: DefaultCapabilityRegistry(),
-		policy:   StaticPolicyEngine{},
-		fixture:  defaultFixtures(),
+		registry:       DefaultCapabilityRegistry(),
+		policy:         StaticPolicyEngine{},
+		fixture:        defaultFixtures(),
+		nextApprovalID: 1,
+		approvals:      map[string]ApprovalRequest{},
 	}
 }
 
@@ -65,15 +72,23 @@ func (s *Service) CapabilityDetails() []CapabilityDefinition {
 
 func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 	decision := s.policy.Evaluate(req, s.registry)
-	s.appendAudit(req, decision.RiskLevel, decision.Decision)
 	if decision.Decision != DecisionAllowed {
+		approvalRequestID := ""
+		if decision.Decision == DecisionApprovalRequired {
+			approval := s.createApprovalRequest(req, decision)
+			approvalRequestID = approval.ID
+		}
+		s.appendAudit(req, decision.RiskLevel, decision.Decision, approvalRequestID)
 		return ToolCallResponse{
-			Status:           decision.Decision,
-			RiskLevel:        decision.RiskLevel,
-			Reason:           decision.Reason,
-			ApprovalRequired: decision.ApprovalRequired,
+			Status:            decision.Decision,
+			RiskLevel:         decision.RiskLevel,
+			Reason:            decision.Reason,
+			ApprovalRequired:  decision.ApprovalRequired,
+			ApprovalRequestID: approvalRequestID,
 		}
 	}
+
+	s.appendAudit(req, decision.RiskLevel, decision.Decision, "")
 
 	definition := decision.Capability
 	key := definition.ID
@@ -102,20 +117,77 @@ func (s *Service) Audit() []AuditEntry {
 	return result
 }
 
-func (s *Service) appendAudit(req ToolCallRequest, riskLevel string, decision string) {
+func (s *Service) Approval(id string) (ApprovalRequest, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	approval, ok := s.approvals[id]
+	return approval, ok
+}
+
+func (s *Service) Approvals() []ApprovalRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]ApprovalRequest, 0, len(s.approvalOrder))
+	for _, id := range s.approvalOrder {
+		result = append(result, s.approvals[id])
+	}
+	return result
+}
+
+func (s *Service) GrantApproval(id string, req ApprovalDecisionRequest) (ApprovalDecisionResponse, bool) {
+	return s.decideApproval(id, ApprovalGranted, req)
+}
+
+func (s *Service) DenyApproval(id string, req ApprovalDecisionRequest) (ApprovalDecisionResponse, bool) {
+	return s.decideApproval(id, ApprovalDenied, req)
+}
+
+func (s *Service) createApprovalRequest(req ToolCallRequest, decision PolicyDecision) ApprovalRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := approvalID(s.nextApprovalID)
+	s.nextApprovalID++
+	approval := newApprovalRequest(id, req, decision, time.Now())
+	s.approvals[id] = approval
+	s.approvalOrder = append(s.approvalOrder, id)
+	return approval
+}
+
+func (s *Service) decideApproval(id string, status string, req ApprovalDecisionRequest) (ApprovalDecisionResponse, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	approval, ok := s.approvals[id]
+	if !ok {
+		return ApprovalDecisionResponse{}, false
+	}
+	if approval.Status == ApprovalPending {
+		approval.Status = status
+		approval.DecidedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		approval.DecidedBy = req.ActorUserID
+		approval.DecisionNote = req.Reason
+		s.approvals[id] = approval
+	}
+	return ApprovalDecisionResponse{
+		Status:   approval.Status,
+		Approval: approval,
+	}, true
+}
+
+func (s *Service) appendAudit(req ToolCallRequest, riskLevel string, decision string, approvalRequestID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.audit = append(s.audit, AuditEntry{
-		At:          time.Now().UTC().Format(time.RFC3339Nano),
-		OrgID:       req.OrgID,
-		ActorUserID: req.ActorUserID,
-		AgentRunID:  req.AgentRunID,
-		ServiceID:   req.ServiceID,
-		Environment: req.Environment,
-		Capability:  req.Capability,
-		Action:      req.Action,
-		RiskLevel:   riskLevel,
-		Decision:    decision,
+		At:                time.Now().UTC().Format(time.RFC3339Nano),
+		OrgID:             req.OrgID,
+		ActorUserID:       req.ActorUserID,
+		AgentRunID:        req.AgentRunID,
+		ServiceID:         req.ServiceID,
+		Environment:       req.Environment,
+		Capability:        req.Capability,
+		Action:            req.Action,
+		RiskLevel:         riskLevel,
+		Decision:          decision,
+		ApprovalRequestID: approvalRequestID,
 	})
 }
 

@@ -102,12 +102,105 @@ func TestCallToolRequiresApprovalForHighRiskAction(t *testing.T) {
 	if !result.ApprovalRequired {
 		t.Fatalf("expected approval required flag")
 	}
+	if result.ApprovalRequestID == "" {
+		t.Fatalf("expected approval request ID")
+	}
+
+	approval, ok := svc.Approval(result.ApprovalRequestID)
+	if !ok {
+		t.Fatalf("expected approval request")
+	}
+	if approval.Status != ApprovalPending {
+		t.Fatalf("expected pending approval, got %q", approval.Status)
+	}
+	if approval.RiskLevel != RiskWriteHigh {
+		t.Fatalf("expected approval risk %q, got %q", RiskWriteHigh, approval.RiskLevel)
+	}
+	if approval.Arguments["target_revision"] != "sha-abc123" {
+		t.Fatalf("expected original tool arguments in approval request")
+	}
+
 	audit := svc.Audit()
 	if len(audit) != 1 {
 		t.Fatalf("expected one audit entry")
 	}
 	if audit[0].Decision != DecisionApprovalRequired {
 		t.Fatalf("expected approval audit decision, got %q", audit[0].Decision)
+	}
+	if audit[0].ApprovalRequestID != result.ApprovalRequestID {
+		t.Fatalf("expected audit to reference approval request")
+	}
+}
+
+func TestGrantApprovalUpdatesPendingRequest(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "deploy",
+		Action:      "rollback",
+	})
+
+	decision, ok := svc.GrantApproval(result.ApprovalRequestID, ApprovalDecisionRequest{
+		ActorUserID: "oncall-lead",
+		Reason:      "Rollback approved during incident.",
+	})
+	if !ok {
+		t.Fatalf("expected approval decision")
+	}
+	if decision.Status != ApprovalGranted {
+		t.Fatalf("expected granted approval, got %q", decision.Status)
+	}
+	if decision.Approval.DecidedBy != "oncall-lead" {
+		t.Fatalf("expected deciding actor")
+	}
+	if decision.Approval.DecisionNote == "" {
+		t.Fatalf("expected decision note")
+	}
+
+	approvals := svc.Approvals()
+	if len(approvals) != 1 {
+		t.Fatalf("expected one approval")
+	}
+	if approvals[0].Status != ApprovalGranted {
+		t.Fatalf("expected stored approval to be granted")
+	}
+}
+
+func TestDenyApprovalUpdatesPendingRequest(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "deploy",
+		Action:      "rollback",
+	})
+
+	decision, ok := svc.DenyApproval(result.ApprovalRequestID, ApprovalDecisionRequest{
+		ActorUserID: "oncall-lead",
+		Reason:      "Rollback too risky.",
+	})
+	if !ok {
+		t.Fatalf("expected approval decision")
+	}
+	if decision.Status != ApprovalDenied {
+		t.Fatalf("expected denied approval, got %q", decision.Status)
+	}
+}
+
+func TestApprovalDecisionReturnsFalseForUnknownID(t *testing.T) {
+	svc := NewService()
+	_, ok := svc.GrantApproval("approval_missing", ApprovalDecisionRequest{
+		ActorUserID: "oncall-lead",
+	})
+	if ok {
+		t.Fatalf("expected unknown approval to be missing")
 	}
 }
 

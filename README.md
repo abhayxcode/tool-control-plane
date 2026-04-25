@@ -37,6 +37,10 @@ The service listens on `:4100`.
 - `GET /v1/capabilities` returns stable capability IDs plus risk/provider metadata.
 - `POST /v1/tool-calls`
 - `GET /v1/audit`
+- `GET /v1/approvals`
+- `GET /v1/approvals/{id}`
+- `POST /v1/approvals/{id}/grant`
+- `POST /v1/approvals/{id}/deny`
 
 Capability metadata includes:
 
@@ -53,6 +57,9 @@ Tool call decisions:
 - `allowed`: action is registered and can execute immediately.
 - `approval_required`: action is registered but cannot execute until an approval workflow grants it.
 - `denied`: action is unknown or blocked by policy.
+
+When a tool call returns `approval_required`, the response includes `approval_request_id`.
+The approval APIs currently record grant/deny decisions; execution after grant is a later step.
 
 ## Test
 
