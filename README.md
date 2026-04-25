@@ -76,6 +76,7 @@ The service listens on `:4100`.
 
 OpenAPI contract: [`api/openapi.yaml`](api/openapi.yaml)
 
+- `GET /openapi.yaml`
 - `GET /healthz`
 - `GET /v1/capabilities` returns stable capability IDs plus risk/provider metadata.
 - `POST /v1/tool-calls`

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/abhayxcode/tool-control-plane/api"
 	"github.com/abhayxcode/tool-control-plane/internal/controlplane"
 )
 
@@ -50,6 +51,11 @@ func newMux(svc *controlplane.Service) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("GET /openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write(api.OpenAPISpec)
 	})
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{

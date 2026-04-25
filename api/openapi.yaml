@@ -6,6 +6,17 @@ info:
 servers:
   - url: http://localhost:4100
 paths:
+  /openapi.yaml:
+    get:
+      summary: Download OpenAPI contract
+      operationId: getOpenAPIContract
+      responses:
+        "200":
+          description: OpenAPI YAML document.
+          content:
+            application/yaml:
+              schema:
+                type: string
   /healthz:
     get:
       summary: Health check
