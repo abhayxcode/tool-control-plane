@@ -20,6 +20,7 @@ func main() {
 func newServiceFromEnv() *controlplane.Service {
 	registry := controlplane.DefaultCapabilityRegistry()
 	adapters := controlplane.DefaultAdapterRegistry()
+	store := controlplane.Store(controlplane.NewMemoryStore())
 	if os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER") == controlplane.GitHubProvider {
 		registry = registry.WithProviderOverrides(controlplane.GitHubProviderOverrides())
 		adapters = controlplane.DefaultAdapterRegistryWithGitHub(controlplane.GitHubAdapterConfig{
@@ -27,9 +28,21 @@ func newServiceFromEnv() *controlplane.Service {
 			BaseURL: os.Getenv("GITHUB_API_BASE_URL"),
 		})
 	}
+	if os.Getenv("TOOL_CONTROL_PLANE_STORE") == "sqlite" || os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH") != "" {
+		path := os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH")
+		if path == "" {
+			path = "tool-control-plane.sqlite3"
+		}
+		sqliteStore, err := controlplane.NewSQLiteStore(path)
+		if err != nil {
+			log.Fatalf("open sqlite store: %v", err)
+		}
+		store = sqliteStore
+	}
 	return controlplane.NewServiceWithOptions(controlplane.ServiceOptions{
 		Registry: registry,
 		Adapters: adapters,
+		Store:    store,
 	})
 }
 
