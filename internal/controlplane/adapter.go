@@ -51,3 +51,10 @@ func DefaultAdapterRegistry() AdapterRegistry {
 		"mock": NewMockAdapter(defaultMockFixtures()),
 	})
 }
+
+func DefaultAdapterRegistryWithGitHub(config GitHubAdapterConfig) AdapterRegistry {
+	return NewAdapterRegistry(map[string]ToolAdapter{
+		"mock":   NewMockAdapter(defaultMockFixtures()),
+		"github": NewGitHubAdapter(config),
+	})
+}

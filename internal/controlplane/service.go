@@ -51,11 +51,33 @@ type Service struct {
 	approvals      map[string]ApprovalRequest
 }
 
+type ServiceOptions struct {
+	Registry CapabilityRegistry
+	Policy   PolicyEngine
+	Adapters AdapterRegistry
+}
+
 func NewService() *Service {
+	return NewServiceWithOptions(ServiceOptions{})
+}
+
+func NewServiceWithOptions(options ServiceOptions) *Service {
+	registry := options.Registry
+	if registry.byID == nil {
+		registry = DefaultCapabilityRegistry()
+	}
+	policy := options.Policy
+	if policy == nil {
+		policy = StaticPolicyEngine{}
+	}
+	adapters := options.Adapters
+	if adapters.byProvider == nil {
+		adapters = DefaultAdapterRegistry()
+	}
 	return &Service{
-		registry:       DefaultCapabilityRegistry(),
-		policy:         StaticPolicyEngine{},
-		adapters:       DefaultAdapterRegistry(),
+		registry:       registry,
+		policy:         policy,
+		adapters:       adapters,
 		nextApprovalID: 1,
 		approvals:      map[string]ApprovalRequest{},
 	}

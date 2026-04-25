@@ -4,16 +4,33 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/abhayxcode/tool-control-plane/internal/controlplane"
 )
 
 func main() {
-	svc := controlplane.NewService()
+	svc := newServiceFromEnv()
 	mux := newMux(svc)
 
 	log.Println("tool-control-plane listening on :4100")
 	log.Fatal(http.ListenAndServe(":4100", mux))
+}
+
+func newServiceFromEnv() *controlplane.Service {
+	registry := controlplane.DefaultCapabilityRegistry()
+	adapters := controlplane.DefaultAdapterRegistry()
+	if os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER") == controlplane.GitHubProvider {
+		registry = registry.WithProviderOverrides(controlplane.GitHubProviderOverrides())
+		adapters = controlplane.DefaultAdapterRegistryWithGitHub(controlplane.GitHubAdapterConfig{
+			Token:   os.Getenv("GITHUB_TOKEN"),
+			BaseURL: os.Getenv("GITHUB_API_BASE_URL"),
+		})
+	}
+	return controlplane.NewServiceWithOptions(controlplane.ServiceOptions{
+		Registry: registry,
+		Adapters: adapters,
+	})
 }
 
 func newMux(svc *controlplane.Service) *http.ServeMux {

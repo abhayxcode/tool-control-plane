@@ -54,6 +54,16 @@ func (r CapabilityRegistry) Details() []CapabilityDefinition {
 	return details
 }
 
+func (r CapabilityRegistry) WithProviderOverrides(overrides map[string]string) CapabilityRegistry {
+	details := r.Details()
+	for index, detail := range details {
+		if provider, ok := overrides[detail.ID]; ok {
+			details[index].Provider = provider
+		}
+	}
+	return NewCapabilityRegistry(details)
+}
+
 func DefaultCapabilityRegistry() CapabilityRegistry {
 	return NewCapabilityRegistry([]CapabilityDefinition{
 		{

@@ -94,3 +94,26 @@ func TestApprovalHTTPFlow(t *testing.T) {
 		t.Fatalf("expected rollback result")
 	}
 }
+
+func TestNewServiceFromEnvCanRouteCodeCapabilitiesToGitHub(t *testing.T) {
+	t.Setenv("TOOL_CONTROL_PLANE_CODE_PROVIDER", "github")
+	t.Setenv("GITHUB_TOKEN", "test-token")
+
+	svc := newServiceFromEnv()
+	var foundGitHubCI bool
+	var foundMockMetrics bool
+	for _, detail := range svc.CapabilityDetails() {
+		if detail.ID == "ci.get_checks" && detail.Provider == controlplane.GitHubProvider {
+			foundGitHubCI = true
+		}
+		if detail.ID == "metrics.get_service_health" && detail.Provider == "mock" {
+			foundMockMetrics = true
+		}
+	}
+	if !foundGitHubCI {
+		t.Fatalf("expected ci.get_checks to use github provider")
+	}
+	if !foundMockMetrics {
+		t.Fatalf("expected metrics capability to remain mock provider")
+	}
+}
