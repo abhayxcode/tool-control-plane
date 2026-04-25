@@ -18,13 +18,27 @@ This repo now exposes the first real Tool Control Plane HTTP boundary for Majdoo
 
 Tool execution is routed through provider adapters. The current built-in provider is `mock`; future providers such as GitHub, Grafana, Datadog, Kubernetes, and Jira should implement the same adapter boundary instead of changing policy or approval logic.
 
-GitHub adapter skeleton:
+GitHub adapter:
 
 - default behavior keeps all capabilities on `mock`
 - set `TOOL_CONTROL_PLANE_CODE_PROVIDER=github` to route `code_host.*` and `ci.*` capabilities to the GitHub adapter
 - set `GITHUB_TOKEN` before using the GitHub adapter
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
-- live GitHub execution is intentionally not implemented yet; the skeleton only establishes the adapter boundary and config path
+- `ci.get_checks` is implemented against GitHub REST check runs
+- `code_host.*` and `ci.get_logs` still return explicit not-implemented errors in the GitHub adapter
+
+`ci.get_checks` accepts either:
+
+- `repository`: `owner/repo`
+- `owner` and `repo`
+
+It also needs one target:
+
+- `ref`
+- `commit_sha`
+- `sha`
+- `head_sha`
+- `pr_number`, which resolves the pull request head SHA first
 
 Planned stack:
 
