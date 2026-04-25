@@ -25,7 +25,8 @@ GitHub adapter:
 - set `GITHUB_TOKEN` before using the GitHub adapter
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
 - `ci.get_checks` is implemented against GitHub REST check runs
-- `code_host.*` and `ci.get_logs` still return explicit not-implemented errors in the GitHub adapter
+- `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
+- `code_host.*` still returns explicit not-implemented errors in the GitHub adapter
 
 `ci.get_checks` accepts either:
 
@@ -39,6 +40,14 @@ It also needs one target:
 - `sha`
 - `head_sha`
 - `pr_number`, which resolves the pull request head SHA first
+
+`ci.get_logs` accepts either:
+
+- `logs_url`
+- `repository`: `owner/repo` plus `job_id`
+
+The response includes `summary`, `log_excerpt`, `truncated`, `source_url`, and `evidence`.
+Log excerpts are bounded to keep agent traces small.
 
 Planned stack:
 

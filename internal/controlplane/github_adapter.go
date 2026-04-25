@@ -12,6 +12,7 @@ import (
 )
 
 const GitHubProvider = "github"
+const githubLogExcerptLimit = 8000
 
 type GitHubAdapterConfig struct {
 	Token   string
@@ -49,9 +50,10 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 	switch definition.ID {
 	case "ci.get_checks":
 		return a.getChecks(req)
+	case "ci.get_logs":
+		return a.getLogs(req)
 	case "code_host.get_recent_changes",
-		"code_host.create_draft_pr",
-		"ci.get_logs":
+		"code_host.create_draft_pr":
 		return nil, fmt.Errorf("github adapter live execution is not implemented for '%s' yet", definition.ID)
 	default:
 		return nil, fmt.Errorf("github adapter does not support capability '%s'", definition.ID)
@@ -59,7 +61,7 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 }
 
 func (a GitHubAdapter) getChecks(req ToolCallRequest) (map[string]any, error) {
-	owner, repo, err := githubRepoArgs(req.Arguments)
+	owner, repo, err := githubRepoArgs("ci.get_checks", req.Arguments)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +113,34 @@ func (a GitHubAdapter) getChecks(req ToolCallRequest) (map[string]any, error) {
 	}, nil
 }
 
+func (a GitHubAdapter) getLogs(req ToolCallRequest) (map[string]any, error) {
+	logsURL, ok := stringArg(req.Arguments, "logs_url")
+	if !ok {
+		owner, repo, err := githubRepoArgs("ci.get_logs", req.Arguments)
+		if err != nil {
+			return nil, err
+		}
+		jobID, err := intArg(req.Arguments, "job_id")
+		if err != nil {
+			return nil, fmt.Errorf("github ci.get_logs requires logs_url or repository plus job_id arguments")
+		}
+		logsURL = fmt.Sprintf("/repos/%s/%s/actions/jobs/%d/logs", url.PathEscape(owner), url.PathEscape(repo), jobID)
+	}
+
+	logText, finalURL, err := a.getText(logsURL)
+	if err != nil {
+		return nil, err
+	}
+	excerpt, truncated := boundedText(logText, githubLogExcerptLimit)
+	return map[string]any{
+		"summary":     summarizeGitHubLog(logText),
+		"log_excerpt": excerpt,
+		"truncated":   truncated,
+		"source_url":  finalURL,
+		"evidence":    fmt.Sprintf("Fetched %d byte(s) of GitHub CI logs.", len(logText)),
+	}, nil
+}
+
 func (a GitHubAdapter) pullRequestHeadSHA(owner string, repo string, prNumber int) (string, error) {
 	var response githubPullResponse
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), prNumber)
@@ -124,27 +154,9 @@ func (a GitHubAdapter) pullRequestHeadSHA(owner string, repo string, prNumber in
 }
 
 func (a GitHubAdapter) getJSON(path string, target any) error {
-	requestURL := a.baseURL + path
-	httpReq, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	body, _, err := a.get(path, "application/vnd.github+json")
 	if err != nil {
 		return err
-	}
-	httpReq.Header.Set("Accept", "application/vnd.github+json")
-	httpReq.Header.Set("Authorization", "Bearer "+a.token)
-	httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	httpResp, err := a.client.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer httpResp.Body.Close()
-
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return err
-	}
-	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
-		return fmt.Errorf("github API request failed with status %d: %s", httpResp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if err := json.Unmarshal(body, target); err != nil {
 		return err
@@ -152,7 +164,44 @@ func (a GitHubAdapter) getJSON(path string, target any) error {
 	return nil
 }
 
-func githubRepoArgs(args map[string]any) (string, string, error) {
+func (a GitHubAdapter) getText(pathOrURL string) (string, string, error) {
+	body, finalURL, err := a.get(pathOrURL, "application/vnd.github+json")
+	if err != nil {
+		return "", "", err
+	}
+	return string(body), finalURL, nil
+}
+
+func (a GitHubAdapter) get(pathOrURL string, accept string) ([]byte, string, error) {
+	requestURL := pathOrURL
+	if !strings.HasPrefix(pathOrURL, "http://") && !strings.HasPrefix(pathOrURL, "https://") {
+		requestURL = a.baseURL + pathOrURL
+	}
+	httpReq, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	httpReq.Header.Set("Accept", accept)
+	httpReq.Header.Set("Authorization", "Bearer "+a.token)
+	httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	httpResp, err := a.client.Do(httpReq)
+	if err != nil {
+		return nil, "", err
+	}
+	defer httpResp.Body.Close()
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
+		return nil, "", fmt.Errorf("github API request failed with status %d: %s", httpResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, requestURL, nil
+}
+
+func githubRepoArgs(action string, args map[string]any) (string, string, error) {
 	if repository, ok := stringArg(args, "repository"); ok {
 		parts := strings.Split(repository, "/")
 		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
@@ -167,7 +216,7 @@ func githubRepoArgs(args map[string]any) (string, string, error) {
 		repo, repoOK = stringArg(args, "repository_name")
 	}
 	if !ownerOK || !repoOK {
-		return "", "", fmt.Errorf("github ci.get_checks requires repository or owner and repo arguments")
+		return "", "", fmt.Errorf("github %s requires repository or owner and repo arguments", action)
 	}
 	return owner, repo, nil
 }
@@ -239,6 +288,21 @@ func combineGitHubCheckStatus(current string, checkStatus string, conclusion str
 		return current
 	}
 	return "passed"
+}
+
+func boundedText(value string, limit int) (string, bool) {
+	if len(value) <= limit {
+		return value, false
+	}
+	return value[:limit], true
+}
+
+func summarizeGitHubLog(logText string) string {
+	lower := strings.ToLower(logText)
+	if strings.Contains(lower, "error") || strings.Contains(lower, "failed") || strings.Contains(lower, "failure") {
+		return "GitHub CI logs contain failure indicators."
+	}
+	return "GitHub CI logs fetched without obvious failure indicators."
 }
 
 type githubCheckRunsResponse struct {

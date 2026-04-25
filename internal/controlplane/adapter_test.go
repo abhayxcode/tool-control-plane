@@ -79,13 +79,13 @@ func TestGitHubAdapterReportsSkeletonForUnimplementedSupportedCapabilities(t *te
 		Token: "test-token",
 	})
 	_, err := adapter.Execute(CapabilityDefinition{
-		ID:       "ci.get_logs",
+		ID:       "code_host.get_recent_changes",
 		Provider: GitHubProvider,
 	}, ToolCallRequest{})
 	if err == nil {
 		t.Fatalf("expected skeleton implementation error")
 	}
-	if err.Error() != "github adapter live execution is not implemented for 'ci.get_logs' yet" {
+	if err.Error() != "github adapter live execution is not implemented for 'code_host.get_recent_changes' yet" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -190,6 +190,85 @@ func TestGitHubAdapterGetsChecksForPullRequestNumber(t *testing.T) {
 	}
 	if result["commit_sha"] != "head-sha-42" {
 		t.Fatalf("expected PR head SHA, got %#v", result["commit_sha"])
+	}
+}
+
+func TestGitHubAdapterGetsLogsFromLogsURL(t *testing.T) {
+	var sawAuth bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/logs/job-1" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") == "Bearer test-token" {
+			sawAuth = true
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("unit-tests\nerror: assertion failed\n"))
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "ci.get_logs",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"logs_url": server.URL + "/logs/job-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected logs result, got error: %v", err)
+	}
+	if !sawAuth {
+		t.Fatalf("expected authorization header")
+	}
+	if result["summary"] != "GitHub CI logs contain failure indicators." {
+		t.Fatalf("expected failure summary, got %#v", result["summary"])
+	}
+	if result["log_excerpt"] != "unit-tests\nerror: assertion failed\n" {
+		t.Fatalf("expected log excerpt, got %#v", result["log_excerpt"])
+	}
+	if result["truncated"] != false {
+		t.Fatalf("expected logs to fit without truncation")
+	}
+}
+
+func TestGitHubAdapterGetsLogsFromJobID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/backend/actions/jobs/123/logs" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("build\nok\n"))
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "ci.get_logs",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"job_id":     123,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected job logs result, got error: %v", err)
+	}
+	if result["summary"] != "GitHub CI logs fetched without obvious failure indicators." {
+		t.Fatalf("expected clean summary, got %#v", result["summary"])
+	}
+	if result["source_url"] != server.URL+"/repos/acme/backend/actions/jobs/123/logs" {
+		t.Fatalf("expected source URL, got %#v", result["source_url"])
 	}
 }
 
