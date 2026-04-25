@@ -6,21 +6,6 @@ import (
 	"time"
 )
 
-var readActions = map[string]bool{
-	"metrics.get_service_health":   true,
-	"errors.get_recent_errors":     true,
-	"deploy.get_recent_deploys":    true,
-	"code_host.get_recent_changes": true,
-	"runtime.get_workload_status":  true,
-	"docs.search_runbooks":         true,
-	"ci.get_checks":                true,
-	"ci.get_logs":                  true,
-}
-
-var writeLowActions = map[string]bool{
-	"code_host.create_draft_pr": true,
-}
-
 type ToolCallRequest struct {
 	OrgID       string         `json:"org_id"`
 	ActorUserID string         `json:"actor_user_id"`
@@ -54,55 +39,45 @@ type AuditEntry struct {
 }
 
 type Service struct {
-	mu      sync.Mutex
-	audit   []AuditEntry
-	fixture map[string]map[string]any
+	mu       sync.Mutex
+	audit    []AuditEntry
+	registry CapabilityRegistry
+	fixture  map[string]map[string]any
 }
 
 func NewService() *Service {
-	return &Service{fixture: defaultFixtures()}
+	return &Service{
+		registry: DefaultCapabilityRegistry(),
+		fixture:  defaultFixtures(),
+	}
 }
 
 func (s *Service) Capabilities() []string {
-	return []string{
-		"metrics.get_service_health",
-		"errors.get_recent_errors",
-		"deploy.get_recent_deploys",
-		"code_host.get_recent_changes",
-		"runtime.get_workload_status",
-		"docs.search_runbooks",
-		"code_host.create_draft_pr",
-		"ci.get_checks",
-		"ci.get_logs",
-	}
+	return s.registry.IDs()
+}
+
+func (s *Service) CapabilityDetails() []CapabilityDefinition {
+	return s.registry.Details()
 }
 
 func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
-	key := req.Capability + "." + req.Action
-	riskLevel := "unknown"
-	allowed := false
-	if readActions[key] {
-		riskLevel = "read"
-		allowed = true
-	} else if writeLowActions[key] {
-		riskLevel = "write_low"
-		allowed = true
+	definition, ok := s.registry.Lookup(req.Capability, req.Action)
+	riskLevel := RiskUnknown
+	if ok {
+		riskLevel = definition.RiskLevel
 	}
-
-	decision := "denied"
-	if allowed {
-		decision = "allowed"
-	}
-	s.appendAudit(req, riskLevel, decision)
-
-	if !allowed {
+	if !ok {
+		s.appendAudit(req, riskLevel, "denied")
 		return ToolCallResponse{
 			Status:    "denied",
 			RiskLevel: riskLevel,
-			Reason:    "Mock policy only permits read and low-risk draft PR actions.",
+			Reason:    "No registered capability allows this tool action.",
 		}
 	}
 
+	s.appendAudit(req, riskLevel, "allowed")
+
+	key := definition.ID
 	result, ok := s.fixture[key]
 	if !ok {
 		return ToolCallResponse{

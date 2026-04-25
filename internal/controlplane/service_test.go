@@ -2,6 +2,38 @@ package controlplane
 
 import "testing"
 
+func TestCapabilitiesExposeStableMetadata(t *testing.T) {
+	svc := NewService()
+	capabilities := svc.Capabilities()
+	if len(capabilities) == 0 {
+		t.Fatalf("expected capabilities")
+	}
+	if capabilities[0] != "ci.get_checks" {
+		t.Fatalf("expected sorted capability IDs, got first ID %q", capabilities[0])
+	}
+
+	details := svc.CapabilityDetails()
+	if len(details) != len(capabilities) {
+		t.Fatalf("expected details for every capability")
+	}
+
+	var foundDraftPR bool
+	for _, detail := range details {
+		if detail.ID == "code_host.create_draft_pr" {
+			foundDraftPR = true
+			if detail.RiskLevel != RiskWriteLow {
+				t.Fatalf("expected draft PR risk %q, got %q", RiskWriteLow, detail.RiskLevel)
+			}
+			if detail.Provider != "mock" {
+				t.Fatalf("expected mock provider, got %q", detail.Provider)
+			}
+		}
+	}
+	if !foundDraftPR {
+		t.Fatalf("expected draft PR capability metadata")
+	}
+}
+
 func TestCallToolAllowsReadAction(t *testing.T) {
 	svc := NewService()
 	result := svc.CallTool(ToolCallRequest{

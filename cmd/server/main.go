@@ -15,8 +15,9 @@ func main() {
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string][]string{
+		writeJSON(w, map[string]any{
 			"capabilities": svc.Capabilities(),
+			"details":      svc.CapabilityDetails(),
 		})
 	})
 	mux.HandleFunc("POST /v1/tool-calls", func(w http.ResponseWriter, r *http.Request) {

@@ -34,9 +34,19 @@ The service listens on `:4100`.
 ## APIs
 
 - `GET /healthz`
-- `GET /v1/capabilities`
+- `GET /v1/capabilities` returns stable capability IDs plus risk/provider metadata.
 - `POST /v1/tool-calls`
 - `GET /v1/audit`
+
+Capability metadata includes:
+
+- `id`
+- `capability`
+- `action`
+- `risk_level`
+- `provider`
+- `description`
+- `approval_required`
 
 ## Test
 
