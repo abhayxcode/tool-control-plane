@@ -75,6 +75,7 @@ The service listens on `:4100`.
 ## APIs
 
 OpenAPI contract: [`api/openapi.yaml`](api/openapi.yaml)
+Go client package: [`client`](client)
 
 - `GET /openapi.yaml`
 - `GET /healthz`
