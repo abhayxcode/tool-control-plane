@@ -46,3 +46,28 @@ func TestCallToolDeniesUnknownAction(t *testing.T) {
 		t.Fatalf("expected denied audit decision, got %q", audit[0].Decision)
 	}
 }
+
+func TestCallToolAllowsDraftPRWriteLowAction(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "code_host",
+		Action:      "create_draft_pr",
+		Arguments: map[string]any{
+			"title": "Draft: Revert backend database pool config",
+		},
+	})
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %q", result.Status)
+	}
+	if result.RiskLevel != "write_low" {
+		t.Fatalf("expected write_low risk, got %q", result.RiskLevel)
+	}
+	if result.Result["url"] == "" {
+		t.Fatalf("expected PR URL")
+	}
+}

@@ -15,6 +15,10 @@ var readActions = map[string]bool{
 	"docs.search_runbooks":         true,
 }
 
+var writeLowActions = map[string]bool{
+	"code_host.create_draft_pr": true,
+}
+
 type ToolCallRequest struct {
 	OrgID       string         `json:"org_id"`
 	ActorUserID string         `json:"actor_user_id"`
@@ -65,6 +69,7 @@ func (s *Service) Capabilities() []string {
 		"code_host.get_recent_changes",
 		"runtime.get_workload_status",
 		"docs.search_runbooks",
+		"code_host.create_draft_pr",
 	}
 }
 
@@ -74,6 +79,9 @@ func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 	allowed := false
 	if readActions[key] {
 		riskLevel = "read"
+		allowed = true
+	} else if writeLowActions[key] {
+		riskLevel = "write_low"
 		allowed = true
 	}
 
@@ -87,7 +95,7 @@ func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 		return ToolCallResponse{
 			Status:    "denied",
 			RiskLevel: riskLevel,
-			Reason:    "Mock policy only permits read actions.",
+			Reason:    "Mock policy only permits read and low-risk draft PR actions.",
 		}
 	}
 
@@ -193,6 +201,13 @@ func defaultFixtures() map[string]map[string]any {
 			},
 			"evidence":   "Runbook recommends checking pool config and rolling back config-only changes for DB timeout spikes.",
 			"source_url": "https://docs.example.local/backend-oncall",
+		},
+		"code_host.create_draft_pr": {
+			"pr_number": 999,
+			"branch":    "majdoor/revert-db-pool-config",
+			"title":     "Draft: Revert backend database pool config",
+			"url":       "https://github.com/acme/backend/pull/999",
+			"evidence":  "Draft PR #999 created from validated patch artifact.",
 		},
 	}
 }
