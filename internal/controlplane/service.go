@@ -18,11 +18,12 @@ type ToolCallRequest struct {
 }
 
 type ToolCallResponse struct {
-	Status    string         `json:"status"`
-	RiskLevel string         `json:"risk_level"`
-	Provider  string         `json:"provider,omitempty"`
-	Result    map[string]any `json:"result,omitempty"`
-	Reason    string         `json:"reason,omitempty"`
+	Status           string         `json:"status"`
+	RiskLevel        string         `json:"risk_level"`
+	Provider         string         `json:"provider,omitempty"`
+	Result           map[string]any `json:"result,omitempty"`
+	Reason           string         `json:"reason,omitempty"`
+	ApprovalRequired bool           `json:"approval_required,omitempty"`
 }
 
 type AuditEntry struct {
@@ -42,12 +43,14 @@ type Service struct {
 	mu       sync.Mutex
 	audit    []AuditEntry
 	registry CapabilityRegistry
+	policy   PolicyEngine
 	fixture  map[string]map[string]any
 }
 
 func NewService() *Service {
 	return &Service{
 		registry: DefaultCapabilityRegistry(),
+		policy:   StaticPolicyEngine{},
 		fixture:  defaultFixtures(),
 	}
 }
@@ -61,36 +64,32 @@ func (s *Service) CapabilityDetails() []CapabilityDefinition {
 }
 
 func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
-	definition, ok := s.registry.Lookup(req.Capability, req.Action)
-	riskLevel := RiskUnknown
-	if ok {
-		riskLevel = definition.RiskLevel
-	}
-	if !ok {
-		s.appendAudit(req, riskLevel, "denied")
+	decision := s.policy.Evaluate(req, s.registry)
+	s.appendAudit(req, decision.RiskLevel, decision.Decision)
+	if decision.Decision != DecisionAllowed {
 		return ToolCallResponse{
-			Status:    "denied",
-			RiskLevel: riskLevel,
-			Reason:    "No registered capability allows this tool action.",
+			Status:           decision.Decision,
+			RiskLevel:        decision.RiskLevel,
+			Reason:           decision.Reason,
+			ApprovalRequired: decision.ApprovalRequired,
 		}
 	}
 
-	s.appendAudit(req, riskLevel, "allowed")
-
+	definition := decision.Capability
 	key := definition.ID
 	result, ok := s.fixture[key]
 	if !ok {
 		return ToolCallResponse{
 			Status:    "error",
-			RiskLevel: riskLevel,
+			RiskLevel: decision.RiskLevel,
 			Reason:    fmt.Sprintf("No fixture for tool '%s'.", key),
 		}
 	}
 
 	return ToolCallResponse{
 		Status:    "success",
-		RiskLevel: riskLevel,
-		Provider:  "mock",
+		RiskLevel: decision.RiskLevel,
+		Provider:  definition.Provider,
 		Result:    result,
 	}
 }

@@ -48,6 +48,12 @@ Capability metadata includes:
 - `description`
 - `approval_required`
 
+Tool call decisions:
+
+- `allowed`: action is registered and can execute immediately.
+- `approval_required`: action is registered but cannot execute until an approval workflow grants it.
+- `denied`: action is unknown or blocked by policy.
+
 ## Test
 
 ```bash

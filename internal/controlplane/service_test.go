@@ -64,8 +64,8 @@ func TestCallToolDeniesUnknownAction(t *testing.T) {
 		AgentRunID:  "run_123",
 		ServiceID:   "backend",
 		Environment: "prod",
-		Capability:  "deploy",
-		Action:      "rollback",
+		Capability:  "database",
+		Action:      "drop",
 	})
 	if result.Status != "denied" {
 		t.Fatalf("expected denied, got %q", result.Status)
@@ -76,6 +76,38 @@ func TestCallToolDeniesUnknownAction(t *testing.T) {
 	}
 	if audit[0].Decision != "denied" {
 		t.Fatalf("expected denied audit decision, got %q", audit[0].Decision)
+	}
+}
+
+func TestCallToolRequiresApprovalForHighRiskAction(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "deploy",
+		Action:      "rollback",
+		Arguments: map[string]any{
+			"target_revision": "sha-abc123",
+		},
+	})
+	if result.Status != DecisionApprovalRequired {
+		t.Fatalf("expected approval required, got %q", result.Status)
+	}
+	if result.RiskLevel != RiskWriteHigh {
+		t.Fatalf("expected write_high risk, got %q", result.RiskLevel)
+	}
+	if !result.ApprovalRequired {
+		t.Fatalf("expected approval required flag")
+	}
+	audit := svc.Audit()
+	if len(audit) != 1 {
+		t.Fatalf("expected one audit entry")
+	}
+	if audit[0].Decision != DecisionApprovalRequired {
+		t.Fatalf("expected approval audit decision, got %q", audit[0].Decision)
 	}
 }
 

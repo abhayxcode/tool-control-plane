@@ -97,6 +97,15 @@ func DefaultCapabilityRegistry() CapabilityRegistry {
 			Description: "Read recent deployment history for a service.",
 		},
 		{
+			ID:               "deploy.rollback",
+			Capability:       "deploy",
+			Action:           "rollback",
+			RiskLevel:        RiskWriteHigh,
+			Provider:         "mock",
+			Description:      "Rollback a deployment in an environment.",
+			ApprovalRequired: true,
+		},
+		{
 			ID:          "docs.search_runbooks",
 			Capability:  "docs",
 			Action:      "search_runbooks",
