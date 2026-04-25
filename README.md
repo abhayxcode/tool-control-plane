@@ -91,6 +91,9 @@ Tool call decisions:
 - `allowed`: action is registered and can execute immediately.
 - `approval_required`: action is registered but cannot execute until an approval workflow grants it.
 - `denied`: action is unknown or blocked by policy.
+- `invalid`: action is registered, but the request is missing required metadata or arguments.
+
+Validation currently checks common request metadata plus capability-specific arguments for draft PR creation, rollback approvals, and GitHub CI reads.
 
 When a tool call returns `approval_required`, the response includes `approval_request_id`.
 Granted approvals can be executed once with `POST /v1/approvals/{id}/execute`.

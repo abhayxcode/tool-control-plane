@@ -79,6 +79,86 @@ func TestCallToolDeniesUnknownAction(t *testing.T) {
 	}
 }
 
+func TestCallToolRejectsInvalidKnownRequest(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "code_host",
+		Action:      "create_draft_pr",
+	})
+	if result.Status != DecisionInvalid {
+		t.Fatalf("expected invalid, got %q", result.Status)
+	}
+	if result.RiskLevel != RiskWriteLow {
+		t.Fatalf("expected write_low risk, got %q", result.RiskLevel)
+	}
+	if result.Reason != "code_host.create_draft_pr requires title argument" {
+		t.Fatalf("unexpected validation reason: %q", result.Reason)
+	}
+
+	audit := svc.Audit()
+	if len(audit) != 1 {
+		t.Fatalf("expected one audit entry")
+	}
+	if audit[0].Decision != DecisionInvalid {
+		t.Fatalf("expected invalid audit decision, got %q", audit[0].Decision)
+	}
+}
+
+func TestCallToolRejectsInvalidApprovalRequestBeforeCreatingApproval(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "deploy",
+		Action:      "rollback",
+	})
+	if result.Status != DecisionInvalid {
+		t.Fatalf("expected invalid, got %q", result.Status)
+	}
+	if result.ApprovalRequestID != "" {
+		t.Fatalf("expected no approval request for invalid tool call")
+	}
+	if len(svc.Approvals()) != 0 {
+		t.Fatalf("expected no approvals")
+	}
+}
+
+func TestCallToolRejectsInvalidGitHubCIRequestBeforeAdapter(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(GitHubProviderOverrides())
+	svc := NewServiceWithOptions(ServiceOptions{
+		Registry: registry,
+		Adapters: DefaultAdapterRegistryWithGitHub(GitHubAdapterConfig{
+			Token: "test-token",
+		}),
+	})
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "ci",
+		Action:      "get_checks",
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+		},
+	})
+	if result.Status != DecisionInvalid {
+		t.Fatalf("expected invalid, got %q", result.Status)
+	}
+	if result.Reason != "github ci.get_checks requires ref, commit_sha, sha, head_sha, or pr_number argument" {
+		t.Fatalf("unexpected validation reason: %q", result.Reason)
+	}
+}
+
 func TestCallToolRequiresApprovalForHighRiskAction(t *testing.T) {
 	svc := NewService()
 	result := svc.CallTool(ToolCallRequest{
@@ -142,6 +222,9 @@ func TestGrantApprovalUpdatesPendingRequest(t *testing.T) {
 		Environment: "prod",
 		Capability:  "deploy",
 		Action:      "rollback",
+		Arguments: map[string]any{
+			"target_revision": "sha-abc123",
+		},
 	})
 
 	decision, ok := svc.GrantApproval(result.ApprovalRequestID, ApprovalDecisionRequest{
@@ -239,6 +322,9 @@ func TestExecuteApprovalBlocksPendingAndDeniedApprovals(t *testing.T) {
 		Environment: "prod",
 		Capability:  "deploy",
 		Action:      "rollback",
+		Arguments: map[string]any{
+			"target_revision": "sha-def456",
+		},
 	})
 	pendingExecution, ok := svc.ExecuteApproval(pending.ApprovalRequestID)
 	if !ok {
@@ -256,6 +342,9 @@ func TestExecuteApprovalBlocksPendingAndDeniedApprovals(t *testing.T) {
 		Environment: "prod",
 		Capability:  "deploy",
 		Action:      "rollback",
+		Arguments: map[string]any{
+			"target_revision": "sha-abc123",
+		},
 	})
 	svc.DenyApproval(denied.ApprovalRequestID, ApprovalDecisionRequest{
 		ActorUserID: "oncall-lead",
@@ -280,6 +369,9 @@ func TestDenyApprovalUpdatesPendingRequest(t *testing.T) {
 		Environment: "prod",
 		Capability:  "deploy",
 		Action:      "rollback",
+		Arguments: map[string]any{
+			"target_revision": "sha-abc123",
+		},
 	})
 
 	decision, ok := svc.DenyApproval(result.ApprovalRequestID, ApprovalDecisionRequest{

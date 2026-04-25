@@ -45,6 +45,7 @@ type Service struct {
 	audit          []AuditEntry
 	registry       CapabilityRegistry
 	policy         PolicyEngine
+	validator      RequestValidator
 	adapters       AdapterRegistry
 	nextApprovalID int
 	approvalOrder  []string
@@ -52,9 +53,10 @@ type Service struct {
 }
 
 type ServiceOptions struct {
-	Registry CapabilityRegistry
-	Policy   PolicyEngine
-	Adapters AdapterRegistry
+	Registry  CapabilityRegistry
+	Policy    PolicyEngine
+	Validator RequestValidator
+	Adapters  AdapterRegistry
 }
 
 func NewService() *Service {
@@ -70,6 +72,10 @@ func NewServiceWithOptions(options ServiceOptions) *Service {
 	if policy == nil {
 		policy = StaticPolicyEngine{}
 	}
+	validator := options.Validator
+	if validator == nil {
+		validator = StaticRequestValidator{}
+	}
 	adapters := options.Adapters
 	if adapters.byProvider == nil {
 		adapters = DefaultAdapterRegistry()
@@ -77,6 +83,7 @@ func NewServiceWithOptions(options ServiceOptions) *Service {
 	return &Service{
 		registry:       registry,
 		policy:         policy,
+		validator:      validator,
 		adapters:       adapters,
 		nextApprovalID: 1,
 		approvals:      map[string]ApprovalRequest{},
@@ -93,6 +100,16 @@ func (s *Service) CapabilityDetails() []CapabilityDefinition {
 
 func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 	decision := s.policy.Evaluate(req, s.registry)
+	if decision.Capability.ID != "" {
+		if err := s.validator.Validate(req, decision.Capability); err != nil {
+			s.appendAudit(req, decision.RiskLevel, DecisionInvalid, "")
+			return ToolCallResponse{
+				Status:    DecisionInvalid,
+				RiskLevel: decision.RiskLevel,
+				Reason:    err.Error(),
+			}
+		}
+	}
 	if decision.Decision != DecisionAllowed {
 		approvalRequestID := ""
 		if decision.Decision == DecisionApprovalRequired {
