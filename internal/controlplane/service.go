@@ -13,6 +13,8 @@ var readActions = map[string]bool{
 	"code_host.get_recent_changes": true,
 	"runtime.get_workload_status":  true,
 	"docs.search_runbooks":         true,
+	"ci.get_checks":                true,
+	"ci.get_logs":                  true,
 }
 
 var writeLowActions = map[string]bool{
@@ -70,6 +72,8 @@ func (s *Service) Capabilities() []string {
 		"runtime.get_workload_status",
 		"docs.search_runbooks",
 		"code_host.create_draft_pr",
+		"ci.get_checks",
+		"ci.get_logs",
 	}
 }
 
@@ -208,6 +212,28 @@ func defaultFixtures() map[string]map[string]any {
 			"title":     "Draft: Revert backend database pool config",
 			"url":       "https://github.com/acme/backend/pull/999",
 			"evidence":  "Draft PR #999 created from validated patch artifact.",
+		},
+		"ci.get_checks": {
+			"status":     "passed",
+			"workflow":   "backend-ci.yml",
+			"commit_sha": "mock-sha-999",
+			"checks": []map[string]any{
+				{
+					"name":       "unit-tests",
+					"conclusion": "success",
+				},
+				{
+					"name":       "config-validation",
+					"conclusion": "success",
+				},
+			},
+			"evidence":   "GitHub Actions mock CI passed for draft PR #999.",
+			"source_url": "https://github.com/acme/backend/actions/runs/999",
+		},
+		"ci.get_logs": {
+			"summary":    "No failing CI logs. All mock checks passed.",
+			"evidence":   "CI logs contain no failures.",
+			"source_url": "https://github.com/acme/backend/actions/runs/999/logs",
 		},
 	}
 }

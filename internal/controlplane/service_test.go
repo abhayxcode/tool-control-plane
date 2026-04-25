@@ -71,3 +71,28 @@ func TestCallToolAllowsDraftPRWriteLowAction(t *testing.T) {
 		t.Fatalf("expected PR URL")
 	}
 }
+
+func TestCallToolAllowsCIReadAction(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "ci",
+		Action:      "get_checks",
+		Arguments: map[string]any{
+			"pr_number": 999,
+		},
+	})
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %q", result.Status)
+	}
+	if result.RiskLevel != "read" {
+		t.Fatalf("expected read risk, got %q", result.RiskLevel)
+	}
+	if result.Result["status"] != "passed" {
+		t.Fatalf("expected passed CI status, got %#v", result.Result["status"])
+	}
+}
