@@ -1,0 +1,379 @@
+openapi: 3.1.0
+info:
+  title: Tool Control Plane API
+  version: 0.1.0
+  description: Governed tool gateway for AI agents with policy, approvals, audit, and provider adapters.
+servers:
+  - url: http://localhost:4100
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /v1/capabilities:
+    get:
+      summary: List registered tool capabilities
+      operationId: listCapabilities
+      responses:
+        "200":
+          description: Capability IDs and metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [capabilities, details]
+                properties:
+                  capabilities:
+                    type: array
+                    items:
+                      type: string
+                  details:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CapabilityDefinition"
+  /v1/tool-calls:
+    post:
+      summary: Execute or request approval for a governed tool call
+      operationId: callTool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToolCallRequest"
+      responses:
+        "200":
+          description: Tool call result, policy denial, validation error, or approval request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolCallResponse"
+        "400":
+          description: Invalid JSON request body.
+  /v1/audit:
+    get:
+      summary: List audit entries
+      operationId: listAuditEntries
+      responses:
+        "200":
+          description: Ordered audit entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEntry"
+  /v1/approvals:
+    get:
+      summary: List approval requests
+      operationId: listApprovals
+      responses:
+        "200":
+          description: Ordered approval requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [approvals]
+                properties:
+                  approvals:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ApprovalRequest"
+  /v1/approvals/{id}:
+    get:
+      summary: Get one approval request
+      operationId: getApproval
+      parameters:
+        - $ref: "#/components/parameters/ApprovalID"
+      responses:
+        "200":
+          description: Approval request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalRequest"
+        "404":
+          description: Approval was not found.
+  /v1/approvals/{id}/grant:
+    post:
+      summary: Grant a pending approval request
+      operationId: grantApproval
+      parameters:
+        - $ref: "#/components/parameters/ApprovalID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecisionRequest"
+      responses:
+        "200":
+          description: Updated approval decision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalDecisionResponse"
+        "400":
+          description: Invalid JSON request body.
+        "404":
+          description: Approval was not found.
+  /v1/approvals/{id}/deny:
+    post:
+      summary: Deny a pending approval request
+      operationId: denyApproval
+      parameters:
+        - $ref: "#/components/parameters/ApprovalID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecisionRequest"
+      responses:
+        "200":
+          description: Updated approval decision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalDecisionResponse"
+        "400":
+          description: Invalid JSON request body.
+        "404":
+          description: Approval was not found.
+  /v1/approvals/{id}/execute:
+    post:
+      summary: Execute a granted approval request once
+      operationId: executeApproval
+      parameters:
+        - $ref: "#/components/parameters/ApprovalID"
+      responses:
+        "200":
+          description: Execution result or blocked response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalExecuteResponse"
+        "404":
+          description: Approval was not found.
+components:
+  parameters:
+    ApprovalID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: approval_000001
+  schemas:
+    JSONValue:
+      description: Arbitrary JSON value.
+    JSONObject:
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/JSONValue"
+    CapabilityDefinition:
+      type: object
+      required: [id, capability, action, risk_level, provider, description, approval_required]
+      properties:
+        id:
+          type: string
+          example: ci.get_checks
+        capability:
+          type: string
+          example: ci
+        action:
+          type: string
+          example: get_checks
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        provider:
+          type: string
+          example: mock
+        description:
+          type: string
+        approval_required:
+          type: boolean
+    ToolCallRequest:
+      type: object
+      required: [org_id, actor_user_id, agent_run_id, service_id, environment, capability, action]
+      properties:
+        org_id:
+          type: string
+        actor_user_id:
+          type: string
+        agent_run_id:
+          type: string
+        service_id:
+          type: string
+        environment:
+          type: string
+        capability:
+          type: string
+        action:
+          type: string
+        arguments:
+          $ref: "#/components/schemas/JSONObject"
+    ToolCallResponse:
+      type: object
+      required: [status, risk_level]
+      properties:
+        status:
+          type: string
+          enum: [success, denied, invalid, approval_required, error]
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        provider:
+          type: string
+        result:
+          $ref: "#/components/schemas/JSONObject"
+        reason:
+          type: string
+        approval_required:
+          type: boolean
+        approval_request_id:
+          type: string
+    AuditEntry:
+      type: object
+      required:
+        - at
+        - org_id
+        - actor_user_id
+        - agent_run_id
+        - service_id
+        - environment
+        - capability
+        - action
+        - risk_level
+        - decision
+      properties:
+        at:
+          type: string
+          format: date-time
+        org_id:
+          type: string
+        actor_user_id:
+          type: string
+        agent_run_id:
+          type: string
+        service_id:
+          type: string
+        environment:
+          type: string
+        capability:
+          type: string
+        action:
+          type: string
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        decision:
+          type: string
+          enum: [allowed, denied, invalid, approval_required, approved_executed]
+        approval_request_id:
+          type: string
+    ApprovalRequest:
+      type: object
+      required:
+        - id
+        - status
+        - executed
+        - org_id
+        - actor_user_id
+        - agent_run_id
+        - service_id
+        - environment
+        - capability
+        - action
+        - risk_level
+        - reason
+        - requested_at
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [pending, granted, denied]
+        executed:
+          type: boolean
+        org_id:
+          type: string
+        actor_user_id:
+          type: string
+        agent_run_id:
+          type: string
+        service_id:
+          type: string
+        environment:
+          type: string
+        capability:
+          type: string
+        action:
+          type: string
+        arguments:
+          $ref: "#/components/schemas/JSONObject"
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        reason:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        decided_at:
+          type: string
+          format: date-time
+        decided_by:
+          type: string
+        decision_note:
+          type: string
+        executed_at:
+          type: string
+          format: date-time
+    ApprovalDecisionRequest:
+      type: object
+      required: [actor_user_id]
+      properties:
+        actor_user_id:
+          type: string
+        reason:
+          type: string
+    ApprovalDecisionResponse:
+      type: object
+      required: [status, approval]
+      properties:
+        status:
+          type: string
+          enum: [pending, granted, denied]
+        approval:
+          $ref: "#/components/schemas/ApprovalRequest"
+    ApprovalExecuteResponse:
+      type: object
+      required: [status, approval]
+      properties:
+        status:
+          type: string
+          enum: [approved_executed, blocked, error]
+        approval:
+          $ref: "#/components/schemas/ApprovalRequest"
+        tool_call:
+          $ref: "#/components/schemas/ToolCallResponse"
+        reason:
+          type: string
+    RiskLevel:
+      type: string
+      enum: [unknown, read, write_low, write_high]
