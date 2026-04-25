@@ -18,6 +18,8 @@ This repo now exposes the first real Tool Control Plane HTTP boundary for Majdoo
 
 Tool execution is routed through provider adapters. The current built-in provider is `mock`; future providers such as GitHub, Grafana, Datadog, Kubernetes, and Jira should implement the same adapter boundary instead of changing policy or approval logic.
 
+Audit and approval state is routed through a storage interface. The default implementation is in-memory; SQLite/Postgres can be added behind the same store boundary later.
+
 GitHub adapter:
 
 - default behavior keeps all capabilities on `mock`

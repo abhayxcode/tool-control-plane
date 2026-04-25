@@ -49,9 +49,8 @@ type ApprovalExecuteResponse struct {
 	Reason   string           `json:"reason,omitempty"`
 }
 
-func newApprovalRequest(id string, req ToolCallRequest, decision PolicyDecision, now time.Time) ApprovalRequest {
+func newApprovalRequest(req ToolCallRequest, decision PolicyDecision, now time.Time) ApprovalRequest {
 	return ApprovalRequest{
-		ID:          id,
 		Status:      ApprovalPending,
 		OrgID:       req.OrgID,
 		ActorUserID: req.ActorUserID,

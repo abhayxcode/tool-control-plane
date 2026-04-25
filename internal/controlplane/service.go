@@ -1,9 +1,6 @@
 package controlplane
 
-import (
-	"sync"
-	"time"
-)
+import "time"
 
 type ToolCallRequest struct {
 	OrgID       string         `json:"org_id"`
@@ -41,15 +38,11 @@ type AuditEntry struct {
 }
 
 type Service struct {
-	mu             sync.Mutex
-	audit          []AuditEntry
-	registry       CapabilityRegistry
-	policy         PolicyEngine
-	validator      RequestValidator
-	adapters       AdapterRegistry
-	nextApprovalID int
-	approvalOrder  []string
-	approvals      map[string]ApprovalRequest
+	registry  CapabilityRegistry
+	policy    PolicyEngine
+	validator RequestValidator
+	adapters  AdapterRegistry
+	store     Store
 }
 
 type ServiceOptions struct {
@@ -57,6 +50,7 @@ type ServiceOptions struct {
 	Policy    PolicyEngine
 	Validator RequestValidator
 	Adapters  AdapterRegistry
+	Store     Store
 }
 
 func NewService() *Service {
@@ -80,13 +74,16 @@ func NewServiceWithOptions(options ServiceOptions) *Service {
 	if adapters.byProvider == nil {
 		adapters = DefaultAdapterRegistry()
 	}
+	store := options.Store
+	if store == nil {
+		store = NewMemoryStore()
+	}
 	return &Service{
-		registry:       registry,
-		policy:         policy,
-		validator:      validator,
-		adapters:       adapters,
-		nextApprovalID: 1,
-		approvals:      map[string]ApprovalRequest{},
+		registry:  registry,
+		policy:    policy,
+		validator: validator,
+		adapters:  adapters,
+		store:     store,
 	}
 }
 
@@ -158,28 +155,15 @@ func (s *Service) executeApprovedTool(req ToolCallRequest, approvalID string) To
 }
 
 func (s *Service) Audit() []AuditEntry {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	result := make([]AuditEntry, len(s.audit))
-	copy(result, s.audit)
-	return result
+	return s.store.Audit()
 }
 
 func (s *Service) Approval(id string) (ApprovalRequest, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	approval, ok := s.approvals[id]
-	return approval, ok
+	return s.store.Approval(id)
 }
 
 func (s *Service) Approvals() []ApprovalRequest {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	result := make([]ApprovalRequest, 0, len(s.approvalOrder))
-	for _, id := range s.approvalOrder {
-		result = append(result, s.approvals[id])
-	}
-	return result
+	return s.store.Approvals()
 }
 
 func (s *Service) GrantApproval(id string, req ApprovalDecisionRequest) (ApprovalDecisionResponse, bool) {
@@ -232,20 +216,12 @@ func (s *Service) ExecuteApproval(id string) (ApprovalExecuteResponse, bool) {
 }
 
 func (s *Service) createApprovalRequest(req ToolCallRequest, decision PolicyDecision) ApprovalRequest {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	id := approvalID(s.nextApprovalID)
-	s.nextApprovalID++
-	approval := newApprovalRequest(id, req, decision, time.Now())
-	s.approvals[id] = approval
-	s.approvalOrder = append(s.approvalOrder, id)
-	return approval
+	approval := newApprovalRequest(req, decision, time.Now())
+	return s.store.CreateApproval(approval)
 }
 
 func (s *Service) decideApproval(id string, status string, req ApprovalDecisionRequest) (ApprovalDecisionResponse, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	approval, ok := s.approvals[id]
+	approval, ok := s.store.Approval(id)
 	if !ok {
 		return ApprovalDecisionResponse{}, false
 	}
@@ -254,7 +230,7 @@ func (s *Service) decideApproval(id string, status string, req ApprovalDecisionR
 		approval.DecidedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		approval.DecidedBy = req.ActorUserID
 		approval.DecisionNote = req.Reason
-		s.approvals[id] = approval
+		s.store.UpdateApproval(approval)
 	}
 	return ApprovalDecisionResponse{
 		Status:   approval.Status,
@@ -263,9 +239,7 @@ func (s *Service) decideApproval(id string, status string, req ApprovalDecisionR
 }
 
 func (s *Service) approvalForExecution(id string) (ApprovalRequest, ToolCallRequest, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	approval, ok := s.approvals[id]
+	approval, ok := s.store.Approval(id)
 	if !ok {
 		return ApprovalRequest{}, ToolCallRequest{}, false
 	}
@@ -283,33 +257,27 @@ func (s *Service) approvalForExecution(id string) (ApprovalRequest, ToolCallRequ
 }
 
 func (s *Service) markApprovalExecuted(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	approval, ok := s.approvals[id]
+	approval, ok := s.store.Approval(id)
 	if !ok {
 		return
 	}
 	approval.Executed = true
 	approval.ExecutedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	s.approvals[id] = approval
+	s.store.UpdateApproval(approval)
 }
 
 func (s *Service) clearApprovalExecution(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	approval, ok := s.approvals[id]
+	approval, ok := s.store.Approval(id)
 	if !ok {
 		return
 	}
 	approval.Executed = false
 	approval.ExecutedAt = ""
-	s.approvals[id] = approval
+	s.store.UpdateApproval(approval)
 }
 
 func (s *Service) appendAudit(req ToolCallRequest, riskLevel string, decision string, approvalRequestID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.audit = append(s.audit, AuditEntry{
+	s.store.AppendAudit(AuditEntry{
 		At:                time.Now().UTC().Format(time.RFC3339Nano),
 		OrgID:             req.OrgID,
 		ActorUserID:       req.ActorUserID,
