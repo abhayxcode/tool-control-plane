@@ -4,6 +4,7 @@ const (
 	DecisionAllowed          = "allowed"
 	DecisionDenied           = "denied"
 	DecisionApprovalRequired = "approval_required"
+	DecisionApprovedExecuted = "approved_executed"
 )
 
 type PolicyDecision struct {

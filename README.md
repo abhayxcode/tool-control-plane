@@ -41,6 +41,7 @@ The service listens on `:4100`.
 - `GET /v1/approvals/{id}`
 - `POST /v1/approvals/{id}/grant`
 - `POST /v1/approvals/{id}/deny`
+- `POST /v1/approvals/{id}/execute`
 
 Capability metadata includes:
 
@@ -59,7 +60,8 @@ Tool call decisions:
 - `denied`: action is unknown or blocked by policy.
 
 When a tool call returns `approval_required`, the response includes `approval_request_id`.
-The approval APIs currently record grant/deny decisions; execution after grant is a later step.
+Granted approvals can be executed once with `POST /v1/approvals/{id}/execute`.
+Pending, denied, missing, and already executed approvals are blocked.
 
 ## Test
 

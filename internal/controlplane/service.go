@@ -89,21 +89,55 @@ func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 	}
 
 	s.appendAudit(req, decision.RiskLevel, decision.Decision, "")
+	return s.executeAllowedTool(req, decision.Capability, decision.RiskLevel)
+}
 
-	definition := decision.Capability
+func (s *Service) executeAllowedTool(req ToolCallRequest, definition CapabilityDefinition, riskLevel string) ToolCallResponse {
 	key := definition.ID
 	result, ok := s.fixture[key]
 	if !ok {
 		return ToolCallResponse{
 			Status:    "error",
-			RiskLevel: decision.RiskLevel,
+			RiskLevel: riskLevel,
 			Reason:    fmt.Sprintf("No fixture for tool '%s'.", key),
 		}
 	}
 
 	return ToolCallResponse{
 		Status:    "success",
-		RiskLevel: decision.RiskLevel,
+		RiskLevel: riskLevel,
+		Provider:  definition.Provider,
+		Result:    result,
+	}
+}
+
+func (s *Service) executeApprovedTool(req ToolCallRequest, approvalID string) ToolCallResponse {
+	definition, ok := s.registry.Lookup(req.Capability, req.Action)
+	riskLevel := RiskUnknown
+	if ok {
+		riskLevel = definition.RiskLevel
+	}
+	if !ok {
+		return ToolCallResponse{
+			Status:    "error",
+			RiskLevel: riskLevel,
+			Reason:    "Approved tool action is no longer registered.",
+		}
+	}
+	key := definition.ID
+	result, ok := s.fixture[key]
+	if !ok {
+		return ToolCallResponse{
+			Status:    "error",
+			RiskLevel: riskLevel,
+			Reason:    fmt.Sprintf("No fixture for tool '%s'.", key),
+		}
+	}
+	s.appendAudit(req, riskLevel, DecisionApprovedExecuted, approvalID)
+
+	return ToolCallResponse{
+		Status:    "success",
+		RiskLevel: riskLevel,
 		Provider:  definition.Provider,
 		Result:    result,
 	}
@@ -142,6 +176,47 @@ func (s *Service) DenyApproval(id string, req ApprovalDecisionRequest) (Approval
 	return s.decideApproval(id, ApprovalDenied, req)
 }
 
+func (s *Service) ExecuteApproval(id string) (ApprovalExecuteResponse, bool) {
+	approval, toolReq, ok := s.approvalForExecution(id)
+	if !ok {
+		return ApprovalExecuteResponse{}, false
+	}
+	if approval.Status != ApprovalGranted {
+		return ApprovalExecuteResponse{
+			Status:   "blocked",
+			Approval: approval,
+			Reason:   "Approval must be granted before execution.",
+		}, true
+	}
+	if approval.Executed {
+		return ApprovalExecuteResponse{
+			Status:   "blocked",
+			Approval: approval,
+			Reason:   "Approval has already been executed.",
+		}, true
+	}
+
+	s.markApprovalExecuted(id)
+	toolCall := s.executeApprovedTool(toolReq, id)
+	if toolCall.Status != "success" {
+		s.clearApprovalExecution(id)
+		approval, _ = s.Approval(id)
+		return ApprovalExecuteResponse{
+			Status:   "error",
+			Approval: approval,
+			ToolCall: toolCall,
+			Reason:   toolCall.Reason,
+		}, true
+	}
+
+	approval, _ = s.Approval(id)
+	return ApprovalExecuteResponse{
+		Status:   DecisionApprovedExecuted,
+		Approval: approval,
+		ToolCall: toolCall,
+	}, true
+}
+
 func (s *Service) createApprovalRequest(req ToolCallRequest, decision PolicyDecision) ApprovalRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -171,6 +246,50 @@ func (s *Service) decideApproval(id string, status string, req ApprovalDecisionR
 		Status:   approval.Status,
 		Approval: approval,
 	}, true
+}
+
+func (s *Service) approvalForExecution(id string) (ApprovalRequest, ToolCallRequest, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	approval, ok := s.approvals[id]
+	if !ok {
+		return ApprovalRequest{}, ToolCallRequest{}, false
+	}
+	toolReq := ToolCallRequest{
+		OrgID:       approval.OrgID,
+		ActorUserID: approval.ActorUserID,
+		AgentRunID:  approval.AgentRunID,
+		ServiceID:   approval.ServiceID,
+		Environment: approval.Environment,
+		Capability:  approval.Capability,
+		Action:      approval.Action,
+		Arguments:   approval.Arguments,
+	}
+	return approval, toolReq, true
+}
+
+func (s *Service) markApprovalExecuted(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	approval, ok := s.approvals[id]
+	if !ok {
+		return
+	}
+	approval.Executed = true
+	approval.ExecutedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	s.approvals[id] = approval
+}
+
+func (s *Service) clearApprovalExecution(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	approval, ok := s.approvals[id]
+	if !ok {
+		return
+	}
+	approval.Executed = false
+	approval.ExecutedAt = ""
+	s.approvals[id] = approval
 }
 
 func (s *Service) appendAudit(req ToolCallRequest, riskLevel string, decision string, approvalRequestID string) {
@@ -223,6 +342,13 @@ func defaultFixtures() map[string]map[string]any {
 			},
 			"evidence":   "Deployment sha-abc123 completed four minutes before the error spike.",
 			"source_url": "https://github.com/acme/backend/actions/runs/1001",
+		},
+		"deploy.rollback": {
+			"rollback_id":     "rollback-123",
+			"target_revision": "sha-abc123",
+			"status":          "started",
+			"evidence":        "Mock rollback to sha-abc123 started after approval.",
+			"source_url":      "https://deploy.example.local/backend-prod/rollbacks/rollback-123",
 		},
 		"code_host.get_recent_changes": {
 			"changes": []map[string]any{

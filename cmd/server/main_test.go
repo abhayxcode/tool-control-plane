@@ -76,4 +76,21 @@ func TestApprovalHTTPFlow(t *testing.T) {
 	if grantResult.Status != controlplane.ApprovalGranted {
 		t.Fatalf("expected granted, got %q", grantResult.Status)
 	}
+
+	executeReq := httptest.NewRequest(http.MethodPost, "/v1/approvals/"+toolResult.ApprovalRequestID+"/execute", nil)
+	executeResp := httptest.NewRecorder()
+	mux.ServeHTTP(executeResp, executeReq)
+	if executeResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", executeResp.Code)
+	}
+	var executeResult controlplane.ApprovalExecuteResponse
+	if err := json.NewDecoder(executeResp.Body).Decode(&executeResult); err != nil {
+		t.Fatalf("decode execute response: %v", err)
+	}
+	if executeResult.Status != controlplane.DecisionApprovedExecuted {
+		t.Fatalf("expected approved execution, got %q", executeResult.Status)
+	}
+	if executeResult.ToolCall.Result["rollback_id"] != "rollback-123" {
+		t.Fatalf("expected rollback result")
+	}
 }

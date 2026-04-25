@@ -170,6 +170,106 @@ func TestGrantApprovalUpdatesPendingRequest(t *testing.T) {
 	}
 }
 
+func TestExecuteApprovalRunsGrantedToolOnce(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "deploy",
+		Action:      "rollback",
+		Arguments: map[string]any{
+			"target_revision": "sha-abc123",
+		},
+	})
+	svc.GrantApproval(result.ApprovalRequestID, ApprovalDecisionRequest{
+		ActorUserID: "oncall-lead",
+		Reason:      "Rollback approved during incident.",
+	})
+
+	executed, ok := svc.ExecuteApproval(result.ApprovalRequestID)
+	if !ok {
+		t.Fatalf("expected approval execution")
+	}
+	if executed.Status != DecisionApprovedExecuted {
+		t.Fatalf("expected approved execution, got %q", executed.Status)
+	}
+	if executed.ToolCall.Status != "success" {
+		t.Fatalf("expected successful tool call, got %q", executed.ToolCall.Status)
+	}
+	if executed.ToolCall.Result["rollback_id"] != "rollback-123" {
+		t.Fatalf("expected rollback fixture result")
+	}
+	if !executed.Approval.Executed {
+		t.Fatalf("expected approval marked executed")
+	}
+	if executed.Approval.ExecutedAt == "" {
+		t.Fatalf("expected executed timestamp")
+	}
+
+	audit := svc.Audit()
+	if len(audit) != 2 {
+		t.Fatalf("expected approval request and approved execution audit entries, got %d", len(audit))
+	}
+	if audit[1].Decision != DecisionApprovedExecuted {
+		t.Fatalf("expected approved execution audit decision, got %q", audit[1].Decision)
+	}
+	if audit[1].ApprovalRequestID != result.ApprovalRequestID {
+		t.Fatalf("expected execution audit to reference approval request")
+	}
+
+	secondExecution, ok := svc.ExecuteApproval(result.ApprovalRequestID)
+	if !ok {
+		t.Fatalf("expected second execution response")
+	}
+	if secondExecution.Status != "blocked" {
+		t.Fatalf("expected second execution blocked, got %q", secondExecution.Status)
+	}
+}
+
+func TestExecuteApprovalBlocksPendingAndDeniedApprovals(t *testing.T) {
+	svc := NewService()
+	pending := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "deploy",
+		Action:      "rollback",
+	})
+	pendingExecution, ok := svc.ExecuteApproval(pending.ApprovalRequestID)
+	if !ok {
+		t.Fatalf("expected pending execution response")
+	}
+	if pendingExecution.Status != "blocked" {
+		t.Fatalf("expected pending approval execution blocked, got %q", pendingExecution.Status)
+	}
+
+	denied := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_456",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "deploy",
+		Action:      "rollback",
+	})
+	svc.DenyApproval(denied.ApprovalRequestID, ApprovalDecisionRequest{
+		ActorUserID: "oncall-lead",
+		Reason:      "Rollback too risky.",
+	})
+	deniedExecution, ok := svc.ExecuteApproval(denied.ApprovalRequestID)
+	if !ok {
+		t.Fatalf("expected denied execution response")
+	}
+	if deniedExecution.Status != "blocked" {
+		t.Fatalf("expected denied approval execution blocked, got %q", deniedExecution.Status)
+	}
+}
+
 func TestDenyApprovalUpdatesPendingRequest(t *testing.T) {
 	svc := NewService()
 	result := svc.CallTool(ToolCallRequest{
@@ -201,6 +301,10 @@ func TestApprovalDecisionReturnsFalseForUnknownID(t *testing.T) {
 	})
 	if ok {
 		t.Fatalf("expected unknown approval to be missing")
+	}
+	_, ok = svc.ExecuteApproval("approval_missing")
+	if ok {
+		t.Fatalf("expected unknown approval execution to be missing")
 	}
 }
 

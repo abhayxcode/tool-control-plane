@@ -14,6 +14,7 @@ const (
 type ApprovalRequest struct {
 	ID           string         `json:"id"`
 	Status       string         `json:"status"`
+	Executed     bool           `json:"executed"`
 	OrgID        string         `json:"org_id"`
 	ActorUserID  string         `json:"actor_user_id"`
 	AgentRunID   string         `json:"agent_run_id"`
@@ -28,6 +29,7 @@ type ApprovalRequest struct {
 	DecidedAt    string         `json:"decided_at,omitempty"`
 	DecidedBy    string         `json:"decided_by,omitempty"`
 	DecisionNote string         `json:"decision_note,omitempty"`
+	ExecutedAt   string         `json:"executed_at,omitempty"`
 }
 
 type ApprovalDecisionRequest struct {
@@ -38,6 +40,13 @@ type ApprovalDecisionRequest struct {
 type ApprovalDecisionResponse struct {
 	Status   string          `json:"status"`
 	Approval ApprovalRequest `json:"approval"`
+}
+
+type ApprovalExecuteResponse struct {
+	Status   string           `json:"status"`
+	Approval ApprovalRequest  `json:"approval"`
+	ToolCall ToolCallResponse `json:"tool_call,omitempty"`
+	Reason   string           `json:"reason,omitempty"`
 }
 
 func newApprovalRequest(id string, req ToolCallRequest, decision PolicyDecision, now time.Time) ApprovalRequest {

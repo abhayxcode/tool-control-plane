@@ -73,6 +73,14 @@ func newMux(svc *controlplane.Service) *http.ServeMux {
 		}
 		writeJSON(w, result)
 	})
+	mux.HandleFunc("POST /v1/approvals/{id}/execute", func(w http.ResponseWriter, r *http.Request) {
+		result, found := svc.ExecuteApproval(r.PathValue("id"))
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, result)
+	})
 	return mux
 }
 
