@@ -3,6 +3,7 @@ package controlplane
 import "time"
 
 type ToolCallRequest struct {
+	RequestID   string         `json:"request_id,omitempty"`
 	OrgID       string         `json:"org_id"`
 	ActorUserID string         `json:"actor_user_id"`
 	AgentRunID  string         `json:"agent_run_id"`
@@ -25,6 +26,7 @@ type ToolCallResponse struct {
 
 type AuditEntry struct {
 	At                string `json:"at"`
+	RequestID         string `json:"request_id,omitempty"`
 	OrgID             string `json:"org_id"`
 	ActorUserID       string `json:"actor_user_id"`
 	AgentRunID        string `json:"agent_run_id"`
@@ -279,6 +281,7 @@ func (s *Service) clearApprovalExecution(id string) {
 func (s *Service) appendAudit(req ToolCallRequest, riskLevel string, decision string, approvalRequestID string) {
 	s.store.AppendAudit(AuditEntry{
 		At:                time.Now().UTC().Format(time.RFC3339Nano),
+		RequestID:         req.RequestID,
 		OrgID:             req.OrgID,
 		ActorUserID:       req.ActorUserID,
 		AgentRunID:        req.AgentRunID,

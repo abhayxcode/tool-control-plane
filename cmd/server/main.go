@@ -1,15 +1,23 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/abhayxcode/tool-control-plane/api"
 	"github.com/abhayxcode/tool-control-plane/internal/controlplane"
 )
+
+type requestIDContextKey struct{}
+
+var requestSeq uint64
 
 func main() {
 	svc := newServiceFromEnv()
@@ -49,7 +57,7 @@ func newServiceFromEnv() *controlplane.Service {
 }
 
 func newHandlerFromEnv(svc *controlplane.Service) http.Handler {
-	return withBearerAuth(newMux(svc), os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"))
+	return withRequestLogging(withBearerAuth(newMux(svc), os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN")))
 }
 
 func newMux(svc *controlplane.Service) *http.ServeMux {
@@ -73,6 +81,9 @@ func newMux(svc *controlplane.Service) *http.ServeMux {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if req.RequestID == "" {
+			req.RequestID = requestIDFromContext(r.Context())
 		}
 		writeJSON(w, svc.CallTool(req))
 	})
@@ -143,11 +154,66 @@ func withBearerAuth(next http.Handler, token string) http.Handler {
 	})
 }
 
+func withRequestLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := requestID(r)
+		recorder := &statusRecorder{
+			ResponseWriter: w,
+			status:         http.StatusOK,
+		}
+		recorder.Header().Set("X-Request-ID", requestID)
+		startedAt := time.Now()
+		ctx := context.WithValue(r.Context(), requestIDContextKey{}, requestID)
+		next.ServeHTTP(recorder, r.WithContext(ctx))
+		logAccess(r, requestID, recorder.status, time.Since(startedAt))
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func requestID(r *http.Request) string {
+	if value := strings.TrimSpace(r.Header.Get("X-Request-ID")); value != "" {
+		return value
+	}
+	seq := atomic.AddUint64(&requestSeq, 1)
+	return "req_" + time.Now().UTC().Format("20060102150405") + "_" + strconv.FormatUint(seq, 10)
+}
+
+func requestIDFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(requestIDContextKey{}).(string)
+	return value
+}
+
+func logAccess(r *http.Request, requestID string, status int, duration time.Duration) {
+	payload := map[string]any{
+		"event":       "http_request",
+		"request_id":  requestID,
+		"method":      r.Method,
+		"path":        r.URL.Path,
+		"status":      status,
+		"duration_ms": duration.Milliseconds(),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("http_request request_id=%s method=%s path=%s status=%d duration_ms=%d", requestID, r.Method, r.URL.Path, status, duration.Milliseconds())
+		return
+	}
+	log.Print(string(encoded))
 }
 
 func decodeApprovalDecision(w http.ResponseWriter, r *http.Request) (controlplane.ApprovalDecisionRequest, bool) {

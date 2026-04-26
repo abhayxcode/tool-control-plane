@@ -32,6 +32,13 @@ API authentication:
 - set `TOOL_CONTROL_PLANE_API_TOKEN` to require `Authorization: Bearer <token>` on all endpoints except `GET /healthz`
 - Go clients can pass the same token with `client.WithBearerToken`
 
+Request tracing:
+
+- every HTTP response includes `X-Request-ID`
+- callers can supply `X-Request-ID`; otherwise the server generates one
+- access logs are emitted as JSON lines with method, path, status, duration, and request ID
+- tool-call audit entries include `request_id`
+
 GitHub adapter:
 
 - default behavior keeps all capabilities on `mock`

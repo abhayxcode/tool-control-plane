@@ -11,6 +11,7 @@ type CapabilityDefinition struct {
 }
 
 type ToolCallRequest struct {
+	RequestID   string         `json:"request_id,omitempty"`
 	OrgID       string         `json:"org_id"`
 	ActorUserID string         `json:"actor_user_id"`
 	AgentRunID  string         `json:"agent_run_id"`
@@ -33,6 +34,7 @@ type ToolCallResponse struct {
 
 type AuditEntry struct {
 	At                string `json:"at"`
+	RequestID         string `json:"request_id,omitempty"`
 	OrgID             string `json:"org_id"`
 	ActorUserID       string `json:"actor_user_id"`
 	AgentRunID        string `json:"agent_run_id"`

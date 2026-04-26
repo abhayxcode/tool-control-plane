@@ -33,10 +33,11 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) AppendAudit(entry AuditEntry) {
 	_, err := s.db.Exec(`
 		INSERT INTO audit_entries (
-			at, org_id, actor_user_id, agent_run_id, service_id, environment,
+			at, request_id, org_id, actor_user_id, agent_run_id, service_id, environment,
 			capability, action, risk_level, decision, approval_request_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.At,
+		entry.RequestID,
 		entry.OrgID,
 		entry.ActorUserID,
 		entry.AgentRunID,
@@ -53,7 +54,7 @@ func (s *SQLiteStore) AppendAudit(entry AuditEntry) {
 
 func (s *SQLiteStore) Audit() []AuditEntry {
 	rows, err := s.db.Query(`
-		SELECT at, org_id, actor_user_id, agent_run_id, service_id, environment,
+		SELECT at, request_id, org_id, actor_user_id, agent_run_id, service_id, environment,
 			capability, action, risk_level, decision, approval_request_id
 		FROM audit_entries
 		ORDER BY seq ASC`)
@@ -65,6 +66,7 @@ func (s *SQLiteStore) Audit() []AuditEntry {
 		var entry AuditEntry
 		err := rows.Scan(
 			&entry.At,
+			&entry.RequestID,
 			&entry.OrgID,
 			&entry.ActorUserID,
 			&entry.AgentRunID,
@@ -201,6 +203,7 @@ func (s *SQLiteStore) migrate() error {
 		CREATE TABLE IF NOT EXISTS audit_entries (
 			seq INTEGER PRIMARY KEY AUTOINCREMENT,
 			at TEXT NOT NULL,
+			request_id TEXT NOT NULL DEFAULT '',
 			org_id TEXT NOT NULL,
 			actor_user_id TEXT NOT NULL,
 			agent_run_id TEXT NOT NULL,

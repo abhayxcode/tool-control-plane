@@ -234,6 +234,8 @@ components:
       properties:
         org_id:
           type: string
+        request_id:
+          type: string
         actor_user_id:
           type: string
         agent_run_id:
@@ -284,6 +286,8 @@ components:
         at:
           type: string
           format: date-time
+        request_id:
+          type: string
         org_id:
           type: string
         actor_user_id:

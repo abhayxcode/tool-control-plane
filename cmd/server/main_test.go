@@ -160,3 +160,50 @@ func TestBearerAuthDisabledWhenTokenEmpty(t *testing.T) {
 		t.Fatalf("expected open local dev mode, got %d", resp.Code)
 	}
 }
+
+func TestRequestLoggingAddsRequestIDHeader(t *testing.T) {
+	handler := withRequestLogging(newMux(controlplane.NewService()))
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	req.Header.Set("X-Request-ID", "req-test-123")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	if resp.Header().Get("X-Request-ID") != "req-test-123" {
+		t.Fatalf("expected response request ID header")
+	}
+}
+
+func TestRequestIDPropagatesToToolAudit(t *testing.T) {
+	svc := controlplane.NewService()
+	handler := withRequestLogging(newMux(svc))
+	body := []byte(`{
+		"org_id": "default",
+		"actor_user_id": "local-user",
+		"agent_run_id": "run_123",
+		"service_id": "backend",
+		"environment": "prod",
+		"capability": "metrics",
+		"action": "get_service_health"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/tool-calls", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "req-tool-123")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	audit := svc.Audit()
+	if len(audit) != 1 {
+		t.Fatalf("expected one audit entry")
+	}
+	if audit[0].RequestID != "req-tool-123" {
+		t.Fatalf("expected audit request ID, got %q", audit[0].RequestID)
+	}
+}

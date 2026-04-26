@@ -14,6 +14,7 @@ func TestSQLiteStorePersistsAuditAndApprovals(t *testing.T) {
 
 	store.AppendAudit(AuditEntry{
 		At:          "2026-07-09T00:00:00Z",
+		RequestID:   "req-test-123",
 		OrgID:       "default",
 		ActorUserID: "local-user",
 		AgentRunID:  "run_123",
@@ -61,6 +62,9 @@ func TestSQLiteStorePersistsAuditAndApprovals(t *testing.T) {
 	}
 	if audit[0].Decision != DecisionApprovalRequired {
 		t.Fatalf("expected persisted audit decision")
+	}
+	if audit[0].RequestID != "req-test-123" {
+		t.Fatalf("expected persisted request ID")
 	}
 
 	storedApproval, ok := reopened.Approval("approval_000001")
