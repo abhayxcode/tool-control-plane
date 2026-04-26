@@ -14,6 +14,7 @@ import (
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	token      string
 }
 
 type Option func(*Client)
@@ -23,6 +24,12 @@ func WithHTTPClient(httpClient *http.Client) Option {
 		if httpClient != nil {
 			client.httpClient = httpClient
 		}
+	}
+}
+
+func WithBearerToken(token string) Option {
+	return func(client *Client) {
+		client.token = strings.TrimSpace(token)
 	}
 }
 
@@ -159,6 +166,9 @@ func (c *Client) doBytes(ctx context.Context, method string, path string, body a
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
 	httpReq.Header.Set("Accept", "application/json")
+	if c.token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.token)
+	}
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {

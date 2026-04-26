@@ -117,3 +117,46 @@ func TestNewServiceFromEnvCanRouteCodeCapabilitiesToGitHub(t *testing.T) {
 		t.Fatalf("expected metrics capability to remain mock provider")
 	}
 }
+
+func TestBearerAuthProtectsAPIWhenTokenConfigured(t *testing.T) {
+	handler := withBearerAuth(newMux(controlplane.NewService()), "secret-token")
+
+	unauthorizedReq := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	unauthorizedResp := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorizedResp, unauthorizedReq)
+	if unauthorizedResp.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", unauthorizedResp.Code)
+	}
+
+	authorizedReq := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	authorizedReq.Header.Set("Authorization", "Bearer secret-token")
+	authorizedResp := httptest.NewRecorder()
+	handler.ServeHTTP(authorizedResp, authorizedReq)
+	if authorizedResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", authorizedResp.Code)
+	}
+}
+
+func TestBearerAuthAllowsHealthWithoutToken(t *testing.T) {
+	handler := withBearerAuth(newMux(controlplane.NewService()), "secret-token")
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected health bypass, got %d", resp.Code)
+	}
+}
+
+func TestBearerAuthDisabledWhenTokenEmpty(t *testing.T) {
+	handler := withBearerAuth(newMux(controlplane.NewService()), "")
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected open local dev mode, got %d", resp.Code)
+	}
+}

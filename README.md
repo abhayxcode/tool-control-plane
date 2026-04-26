@@ -26,6 +26,12 @@ SQLite store:
 - optional `TOOL_CONTROL_PLANE_SQLITE_PATH=/path/to/controlplane.sqlite3`
 - if no path is set, the service uses `tool-control-plane.sqlite3` in the current directory
 
+API authentication:
+
+- local dev is open by default
+- set `TOOL_CONTROL_PLANE_API_TOKEN` to require `Authorization: Bearer <token>` on all endpoints except `GET /healthz`
+- Go clients can pass the same token with `client.WithBearerToken`
+
 GitHub adapter:
 
 - default behavior keeps all capabilities on `mock`

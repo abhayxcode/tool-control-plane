@@ -126,6 +126,30 @@ func TestClientReturnsHTTPError(t *testing.T) {
 	}
 }
 
+func TestClientSendsBearerToken(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer secret-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		writeTestJSON(w, map[string]string{"status": "ok"})
+	}))
+	defer testServer.Close()
+
+	tcp, err := New(testServer.URL, WithHTTPClient(testServer.Client()), WithBearerToken("secret-token"))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	health, err := tcp.Health(context.Background())
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if health["status"] != "ok" {
+		t.Fatalf("expected healthy response")
+	}
+}
+
 func testMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	approval := ApprovalRequest{

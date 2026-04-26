@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/abhayxcode/tool-control-plane/api"
 	"github.com/abhayxcode/tool-control-plane/internal/controlplane"
@@ -12,10 +13,10 @@ import (
 
 func main() {
 	svc := newServiceFromEnv()
-	mux := newMux(svc)
+	handler := newHandlerFromEnv(svc)
 
 	log.Println("tool-control-plane listening on :4100")
-	log.Fatal(http.ListenAndServe(":4100", mux))
+	log.Fatal(http.ListenAndServe(":4100", handler))
 }
 
 func newServiceFromEnv() *controlplane.Service {
@@ -45,6 +46,10 @@ func newServiceFromEnv() *controlplane.Service {
 		Adapters: adapters,
 		Store:    store,
 	})
+}
+
+func newHandlerFromEnv(svc *controlplane.Service) http.Handler {
+	return withBearerAuth(newMux(svc), os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"))
 }
 
 func newMux(svc *controlplane.Service) *http.ServeMux {
@@ -118,6 +123,24 @@ func newMux(svc *controlplane.Service) *http.ServeMux {
 		writeJSON(w, result)
 	})
 	return mux
+}
+
+func withBearerAuth(next http.Handler, token string) http.Handler {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, value any) {

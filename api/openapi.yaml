@@ -5,6 +5,8 @@ info:
   description: Governed tool gateway for AI agents with policy, approvals, audit, and provider adapters.
 servers:
   - url: http://localhost:4100
+security:
+  - bearerAuth: []
 paths:
   /openapi.yaml:
     get:
@@ -21,6 +23,7 @@ paths:
     get:
       summary: Health check
       operationId: getHealth
+      security: []
       responses:
         "200":
           description: Service is healthy.
@@ -184,6 +187,10 @@ paths:
         "404":
           description: Approval was not found.
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
   parameters:
     ApprovalID:
       name: id
