@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -57,7 +59,7 @@ func newServiceFromEnv() *controlplane.Service {
 }
 
 func newHandlerFromEnv(svc *controlplane.Service) http.Handler {
-	return withRequestLogging(withBearerAuth(newMux(svc), os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN")))
+	return withRequestLogging(withRateLimit(withBearerAuth(newMux(svc), os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN")), newRateLimiterFromEnv()))
 }
 
 func newMux(svc *controlplane.Service) *http.ServeMux {
@@ -152,6 +154,92 @@ func withBearerAuth(next http.Handler, token string) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+type rateLimiter struct {
+	mu        sync.Mutex
+	limit     int
+	window    time.Duration
+	now       func() time.Time
+	instances map[string]rateLimitInstance
+}
+
+type rateLimitInstance struct {
+	windowStart time.Time
+	count       int
+}
+
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	if window <= 0 {
+		window = time.Minute
+	}
+	return &rateLimiter{
+		limit:     limit,
+		window:    window,
+		now:       time.Now,
+		instances: map[string]rateLimitInstance{},
+	}
+}
+
+func newRateLimiterFromEnv() *rateLimiter {
+	raw := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE"))
+	if raw == "" {
+		return nil
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Fatalf("invalid TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE: %v", err)
+	}
+	return newRateLimiter(limit, time.Minute)
+}
+
+func (l *rateLimiter) allow(key string) bool {
+	if l == nil || l.limit <= 0 {
+		return true
+	}
+	now := l.now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	instance := l.instances[key]
+	if instance.windowStart.IsZero() || now.Sub(instance.windowStart) >= l.window {
+		instance = rateLimitInstance{windowStart: now}
+	}
+	if instance.count >= l.limit {
+		l.instances[key] = instance
+		return false
+	}
+	instance.count++
+	l.instances[key] = instance
+	return true
+}
+
+func withRateLimit(next http.Handler, limiter *rateLimiter) http.Handler {
+	if limiter == nil || limiter.limit <= 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !limiter.allow(rateLimitKey(r)) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func rateLimitKey(r *http.Request) string {
+	if authorization := strings.TrimSpace(r.Header.Get("Authorization")); authorization != "" {
+		return authorization
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 func withRequestLogging(next http.Handler) http.Handler {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/abhayxcode/tool-control-plane/internal/controlplane"
 )
@@ -205,5 +206,86 @@ func TestRequestIDPropagatesToToolAudit(t *testing.T) {
 	}
 	if audit[0].RequestID != "req-tool-123" {
 		t.Fatalf("expected audit request ID, got %q", audit[0].RequestID)
+	}
+}
+
+func TestRateLimitBlocksAfterLimit(t *testing.T) {
+	limiter := newRateLimiter(1, time.Minute)
+	handler := withRateLimit(newMux(controlplane.NewService()), limiter)
+
+	firstReq := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	firstReq.RemoteAddr = "192.0.2.1:1234"
+	firstResp := httptest.NewRecorder()
+	handler.ServeHTTP(firstResp, firstReq)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("expected first request allowed, got %d", firstResp.Code)
+	}
+
+	secondReq := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	secondReq.RemoteAddr = "192.0.2.1:1235"
+	secondResp := httptest.NewRecorder()
+	handler.ServeHTTP(secondResp, secondReq)
+	if secondResp.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected second request rate limited, got %d", secondResp.Code)
+	}
+}
+
+func TestRateLimitUsesBearerTokenAsKey(t *testing.T) {
+	limiter := newRateLimiter(1, time.Minute)
+	handler := withRateLimit(newMux(controlplane.NewService()), limiter)
+
+	firstReq := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	firstReq.RemoteAddr = "192.0.2.1:1234"
+	firstReq.Header.Set("Authorization", "Bearer token-a")
+	firstResp := httptest.NewRecorder()
+	handler.ServeHTTP(firstResp, firstReq)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("expected first token request allowed, got %d", firstResp.Code)
+	}
+
+	secondReq := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	secondReq.RemoteAddr = "192.0.2.1:1234"
+	secondReq.Header.Set("Authorization", "Bearer token-b")
+	secondResp := httptest.NewRecorder()
+	handler.ServeHTTP(secondResp, secondReq)
+	if secondResp.Code != http.StatusOK {
+		t.Fatalf("expected different token request allowed, got %d", secondResp.Code)
+	}
+}
+
+func TestRateLimitResetsAfterWindow(t *testing.T) {
+	now := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
+	limiter := newRateLimiter(1, time.Minute)
+	limiter.now = func() time.Time { return now }
+	handler := withRateLimit(newMux(controlplane.NewService()), limiter)
+
+	firstReq := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	firstReq.RemoteAddr = "192.0.2.1:1234"
+	firstResp := httptest.NewRecorder()
+	handler.ServeHTTP(firstResp, firstReq)
+	if firstResp.Code != http.StatusOK {
+		t.Fatalf("expected first request allowed, got %d", firstResp.Code)
+	}
+
+	now = now.Add(time.Minute)
+	secondReq := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	secondReq.RemoteAddr = "192.0.2.1:1235"
+	secondResp := httptest.NewRecorder()
+	handler.ServeHTTP(secondResp, secondReq)
+	if secondResp.Code != http.StatusOK {
+		t.Fatalf("expected request allowed after reset, got %d", secondResp.Code)
+	}
+}
+
+func TestRateLimitAllowsHealth(t *testing.T) {
+	limiter := newRateLimiter(0, time.Minute)
+	handler := withRateLimit(newMux(controlplane.NewService()), limiter)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected health allowed, got %d", resp.Code)
 	}
 }

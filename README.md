@@ -39,6 +39,12 @@ Request tracing:
 - access logs are emitted as JSON lines with method, path, status, duration, and request ID
 - tool-call audit entries include `request_id`
 
+Rate limiting:
+
+- disabled by default
+- set `TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE` to limit requests per bearer token, or per client IP when no bearer token is present
+- `GET /healthz` is never rate limited
+
 GitHub adapter:
 
 - default behavior keeps all capabilities on `mock`
