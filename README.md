@@ -89,7 +89,18 @@ Planned stack:
 go run ./cmd/server
 ```
 
-The service listens on `:4100`.
+The service listens on `:4100` by default. Set `TOOL_CONTROL_PLANE_ADDR` to override the bind address.
+
+Configuration:
+
+- `TOOL_CONTROL_PLANE_ADDR`
+- `TOOL_CONTROL_PLANE_API_TOKEN`
+- `TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE`
+- `TOOL_CONTROL_PLANE_STORE`
+- `TOOL_CONTROL_PLANE_SQLITE_PATH`
+- `TOOL_CONTROL_PLANE_CODE_PROVIDER`
+- `GITHUB_TOKEN`
+- `GITHUB_API_BASE_URL`
 
 ## APIs
 

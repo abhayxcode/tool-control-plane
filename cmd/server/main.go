@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,44 +21,18 @@ type requestIDContextKey struct{}
 var requestSeq uint64
 
 func main() {
-	svc := newServiceFromEnv()
-	handler := newHandlerFromEnv(svc)
-
-	log.Println("tool-control-plane listening on :4100")
-	log.Fatal(http.ListenAndServe(":4100", handler))
-}
-
-func newServiceFromEnv() *controlplane.Service {
-	registry := controlplane.DefaultCapabilityRegistry()
-	adapters := controlplane.DefaultAdapterRegistry()
-	store := controlplane.Store(controlplane.NewMemoryStore())
-	if os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER") == controlplane.GitHubProvider {
-		registry = registry.WithProviderOverrides(controlplane.GitHubProviderOverrides())
-		adapters = controlplane.DefaultAdapterRegistryWithGitHub(controlplane.GitHubAdapterConfig{
-			Token:   os.Getenv("GITHUB_TOKEN"),
-			BaseURL: os.Getenv("GITHUB_API_BASE_URL"),
-		})
+	config, err := configFromEnv()
+	if err != nil {
+		log.Fatal(err)
 	}
-	if os.Getenv("TOOL_CONTROL_PLANE_STORE") == "sqlite" || os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH") != "" {
-		path := os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH")
-		if path == "" {
-			path = "tool-control-plane.sqlite3"
-		}
-		sqliteStore, err := controlplane.NewSQLiteStore(path)
-		if err != nil {
-			log.Fatalf("open sqlite store: %v", err)
-		}
-		store = sqliteStore
+	svc, err := newServiceFromConfig(config)
+	if err != nil {
+		log.Fatal(err)
 	}
-	return controlplane.NewServiceWithOptions(controlplane.ServiceOptions{
-		Registry: registry,
-		Adapters: adapters,
-		Store:    store,
-	})
-}
+	handler := newHandler(config, svc)
 
-func newHandlerFromEnv(svc *controlplane.Service) http.Handler {
-	return withRequestLogging(withRateLimit(withBearerAuth(newMux(svc), os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN")), newRateLimiterFromEnv()))
+	log.Printf("tool-control-plane listening on %s", config.Addr)
+	log.Fatal(http.ListenAndServe(config.Addr, handler))
 }
 
 func newMux(svc *controlplane.Service) *http.ServeMux {
@@ -179,18 +152,6 @@ func newRateLimiter(limit int, window time.Duration) *rateLimiter {
 		now:       time.Now,
 		instances: map[string]rateLimitInstance{},
 	}
-}
-
-func newRateLimiterFromEnv() *rateLimiter {
-	raw := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE"))
-	if raw == "" {
-		return nil
-	}
-	limit, err := strconv.Atoi(raw)
-	if err != nil {
-		log.Fatalf("invalid TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE: %v", err)
-	}
-	return newRateLimiter(limit, time.Minute)
 }
 
 func (l *rateLimiter) allow(key string) bool {

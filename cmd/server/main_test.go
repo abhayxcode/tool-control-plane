@@ -97,10 +97,13 @@ func TestApprovalHTTPFlow(t *testing.T) {
 }
 
 func TestNewServiceFromEnvCanRouteCodeCapabilitiesToGitHub(t *testing.T) {
-	t.Setenv("TOOL_CONTROL_PLANE_CODE_PROVIDER", "github")
-	t.Setenv("GITHUB_TOKEN", "test-token")
-
-	svc := newServiceFromEnv()
+	svc, err := newServiceFromConfig(Config{
+		CodeProvider: controlplane.GitHubProvider,
+		GitHubToken:  "test-token",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
 	var foundGitHubCI bool
 	var foundMockMetrics bool
 	for _, detail := range svc.CapabilityDetails() {
@@ -116,6 +119,45 @@ func TestNewServiceFromEnvCanRouteCodeCapabilitiesToGitHub(t *testing.T) {
 	}
 	if !foundMockMetrics {
 		t.Fatalf("expected metrics capability to remain mock provider")
+	}
+}
+
+func TestConfigFromEnv(t *testing.T) {
+	t.Setenv("TOOL_CONTROL_PLANE_ADDR", ":4200")
+	t.Setenv("TOOL_CONTROL_PLANE_API_TOKEN", "secret-token")
+	t.Setenv("TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE", "12")
+	t.Setenv("TOOL_CONTROL_PLANE_STORE", "sqlite")
+	t.Setenv("TOOL_CONTROL_PLANE_SQLITE_PATH", "/tmp/controlplane.sqlite3")
+	t.Setenv("TOOL_CONTROL_PLANE_CODE_PROVIDER", "github")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+	t.Setenv("GITHUB_API_BASE_URL", "https://github.example/api/v3")
+
+	config, err := configFromEnv()
+	if err != nil {
+		t.Fatalf("config from env: %v", err)
+	}
+	if config.Addr != ":4200" {
+		t.Fatalf("unexpected addr: %q", config.Addr)
+	}
+	if config.APIToken != "secret-token" {
+		t.Fatalf("unexpected API token")
+	}
+	if config.RateLimitPerMinute != 12 {
+		t.Fatalf("unexpected rate limit: %d", config.RateLimitPerMinute)
+	}
+	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
+		t.Fatalf("unexpected store config")
+	}
+	if config.CodeProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" {
+		t.Fatalf("unexpected GitHub config")
+	}
+}
+
+func TestConfigFromEnvRejectsInvalidRateLimit(t *testing.T) {
+	t.Setenv("TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE", "nope")
+	_, err := configFromEnv()
+	if err == nil {
+		t.Fatalf("expected invalid rate limit error")
 	}
 }
 
