@@ -79,14 +79,105 @@ func TestGitHubAdapterReportsSkeletonForUnimplementedSupportedCapabilities(t *te
 		Token: "test-token",
 	})
 	_, err := adapter.Execute(CapabilityDefinition{
-		ID:       "code_host.get_recent_changes",
+		ID:       "code_host.create_draft_pr",
 		Provider: GitHubProvider,
 	}, ToolCallRequest{})
 	if err == nil {
 		t.Fatalf("expected skeleton implementation error")
 	}
-	if err.Error() != "github adapter live execution is not implemented for 'code_host.get_recent_changes' yet" {
+	if err.Error() != "github adapter live execution is not implemented for 'code_host.create_draft_pr' yet" {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGitHubAdapterGetsRecentChanges(t *testing.T) {
+	var sawAuth bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/backend/pulls" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("state") != "closed" {
+			t.Fatalf("expected closed pull requests query")
+		}
+		if r.URL.Query().Get("per_page") != "4" {
+			t.Fatalf("expected doubled per_page for filtering, got %q", r.URL.Query().Get("per_page"))
+		}
+		if r.URL.Query().Get("base") != "main" {
+			t.Fatalf("expected base branch")
+		}
+		if r.Header.Get("Authorization") == "Bearer test-token" {
+			sawAuth = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`[
+			{
+				"number": 10,
+				"title": "Tune database pool defaults",
+				"html_url": "https://github.com/acme/backend/pull/10",
+				"merged_at": "2026-07-09T09:38:00Z",
+				"updated_at": "2026-07-09T09:39:00Z",
+				"changed_files": 2,
+				"user": {"login": "octocat"}
+			},
+			{
+				"number": 9,
+				"title": "Closed but not merged",
+				"html_url": "https://github.com/acme/backend/pull/9",
+				"merged_at": null,
+				"updated_at": "2026-07-09T09:00:00Z",
+				"changed_files": 1,
+				"user": {"login": "octocat"}
+			},
+			{
+				"number": 8,
+				"title": "Update retry timeout",
+				"html_url": "https://github.com/acme/backend/pull/8",
+				"merged_at": "2026-07-09T08:00:00Z",
+				"updated_at": "2026-07-09T08:01:00Z",
+				"changed_files": 4,
+				"user": {"login": "hubot"}
+			}
+		]`))
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "code_host.get_recent_changes",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"branch":     "main",
+			"limit":      2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected recent changes result, got error: %v", err)
+	}
+	if !sawAuth {
+		t.Fatalf("expected authorization header")
+	}
+	changes, ok := result["changes"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected normalized changes")
+	}
+	if len(changes) != 2 {
+		t.Fatalf("expected two merged changes, got %d", len(changes))
+	}
+	if changes[0]["pr"] != 10 {
+		t.Fatalf("expected first PR #10, got %#v", changes[0]["pr"])
+	}
+	if changes[1]["pr"] != 8 {
+		t.Fatalf("expected second merged PR #8, got %#v", changes[1]["pr"])
+	}
+	if result["evidence"] != "GitHub returned 2 merged pull request change(s) for acme/backend." {
+		t.Fatalf("unexpected evidence: %#v", result["evidence"])
 	}
 }
 

@@ -51,9 +51,17 @@ GitHub adapter:
 - set `TOOL_CONTROL_PLANE_CODE_PROVIDER=github` to route `code_host.*` and `ci.*` capabilities to the GitHub adapter
 - set `GITHUB_TOKEN` before using the GitHub adapter
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
+- `code_host.get_recent_changes` is implemented against recent merged GitHub pull requests
 - `ci.get_checks` is implemented against GitHub REST check runs
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
-- `code_host.*` still returns explicit not-implemented errors in the GitHub adapter
+- `code_host.create_draft_pr` still returns an explicit not-implemented error in the GitHub adapter
+
+`code_host.get_recent_changes` accepts:
+
+- `repository`: `owner/repo`
+- or `owner` and `repo`
+- optional `branch`
+- optional `limit`, capped at 20
 
 `ci.get_checks` accepts either:
 

@@ -52,12 +52,69 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 		return a.getChecks(req)
 	case "ci.get_logs":
 		return a.getLogs(req)
-	case "code_host.get_recent_changes",
-		"code_host.create_draft_pr":
+	case "code_host.get_recent_changes":
+		return a.getRecentChanges(req)
+	case "code_host.create_draft_pr":
 		return nil, fmt.Errorf("github adapter live execution is not implemented for '%s' yet", definition.ID)
 	default:
 		return nil, fmt.Errorf("github adapter does not support capability '%s'", definition.ID)
 	}
+}
+
+func (a GitHubAdapter) getRecentChanges(req ToolCallRequest) (map[string]any, error) {
+	owner, repo, err := githubRepoArgs("code_host.get_recent_changes", req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	limit := optionalIntArg(req.Arguments, "limit", 5)
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	query := url.Values{}
+	query.Set("state", "closed")
+	query.Set("sort", "updated")
+	query.Set("direction", "desc")
+	query.Set("per_page", strconv.Itoa(limit*2))
+	if branch, ok := stringArg(req.Arguments, "branch"); ok {
+		query.Set("base", branch)
+	}
+
+	var pulls []githubPullListItem
+	path := fmt.Sprintf("/repos/%s/%s/pulls?%s", url.PathEscape(owner), url.PathEscape(repo), query.Encode())
+	if err := a.getJSON(path, &pulls); err != nil {
+		return nil, err
+	}
+
+	changes := make([]map[string]any, 0, limit)
+	for _, pull := range pulls {
+		if pull.MergedAt == "" {
+			continue
+		}
+		changes = append(changes, map[string]any{
+			"pr":            pull.Number,
+			"title":         pull.Title,
+			"author":        pull.User.Login,
+			"merged_at":     pull.MergedAt,
+			"updated_at":    pull.UpdatedAt,
+			"changed_files": pull.ChangedFiles,
+			"url":           pull.HTMLURL,
+			"summary":       fmt.Sprintf("Merged PR #%d: %s", pull.Number, pull.Title),
+		})
+		if len(changes) == limit {
+			break
+		}
+	}
+
+	sourceURL := fmt.Sprintf("%s/%s/%s/pulls?q=is%%3Apr+is%%3Amerged", strings.TrimRight("https://github.com", "/"), owner, repo)
+	return map[string]any{
+		"changes":    changes,
+		"evidence":   fmt.Sprintf("GitHub returned %d merged pull request change(s) for %s/%s.", len(changes), owner, repo),
+		"source_url": sourceURL,
+	}, nil
 }
 
 func (a GitHubAdapter) getChecks(req ToolCallRequest) (map[string]any, error) {
@@ -267,6 +324,14 @@ func intArg(args map[string]any, key string) (int, error) {
 	}
 }
 
+func optionalIntArg(args map[string]any, key string, fallback int) int {
+	value, err := intArg(args, key)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
 func combineGitHubCheckStatus(current string, checkStatus string, conclusion string) string {
 	failingConclusions := map[string]bool{
 		"action_required": true,
@@ -319,6 +384,18 @@ type githubPullResponse struct {
 	Head struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
+}
+
+type githubPullListItem struct {
+	Number       int    `json:"number"`
+	Title        string `json:"title"`
+	HTMLURL      string `json:"html_url"`
+	MergedAt     string `json:"merged_at"`
+	UpdatedAt    string `json:"updated_at"`
+	ChangedFiles int    `json:"changed_files"`
+	User         struct {
+		Login string `json:"login"`
+	} `json:"user"`
 }
 
 func (a GitHubAdapter) BaseURL() string {
