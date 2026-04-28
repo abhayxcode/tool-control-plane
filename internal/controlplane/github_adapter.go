@@ -55,10 +55,62 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 	case "code_host.get_recent_changes":
 		return a.getRecentChanges(req)
 	case "code_host.create_draft_pr":
-		return nil, fmt.Errorf("github adapter live execution is not implemented for '%s' yet", definition.ID)
+		return a.createDraftPR(req)
 	default:
 		return nil, fmt.Errorf("github adapter does not support capability '%s'", definition.ID)
 	}
+}
+
+func (a GitHubAdapter) createDraftPR(req ToolCallRequest) (map[string]any, error) {
+	owner, repo, err := githubRepoArgs("code_host.create_draft_pr", req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	title, ok := stringArg(req.Arguments, "title")
+	if !ok {
+		return nil, fmt.Errorf("github code_host.create_draft_pr requires title argument")
+	}
+	head, ok := githubHeadBranchArg(req.Arguments)
+	if !ok {
+		return nil, fmt.Errorf("github code_host.create_draft_pr requires head, head_branch, or branch argument")
+	}
+	base, ok := stringArg(req.Arguments, "base")
+	if !ok {
+		base, ok = stringArg(req.Arguments, "base_branch")
+	}
+	if !ok {
+		base = "main"
+	}
+	body, _ := stringArg(req.Arguments, "body")
+	draft := optionalBoolArg(req.Arguments, "draft", true)
+
+	payload := map[string]any{
+		"title": title,
+		"head":  head,
+		"base":  base,
+		"body":  body,
+		"draft": draft,
+	}
+	var response githubCreatePullResponse
+	path := fmt.Sprintf("/repos/%s/%s/pulls", url.PathEscape(owner), url.PathEscape(repo))
+	if err := a.postJSON(path, payload, &response); err != nil {
+		return nil, err
+	}
+	if response.Number == 0 || response.HTMLURL == "" {
+		return nil, fmt.Errorf("github create pull request response did not include PR number and URL")
+	}
+	branch := response.Head.Ref
+	if branch == "" {
+		branch = head
+	}
+	return map[string]any{
+		"pr_number": response.Number,
+		"branch":    branch,
+		"title":     response.Title,
+		"url":       response.HTMLURL,
+		"draft":     response.Draft,
+		"evidence":  fmt.Sprintf("GitHub draft PR #%d created for %s/%s from %s into %s.", response.Number, owner, repo, head, base),
+	}, nil
 }
 
 func (a GitHubAdapter) getRecentChanges(req ToolCallRequest) (map[string]any, error) {
@@ -221,6 +273,21 @@ func (a GitHubAdapter) getJSON(path string, target any) error {
 	return nil
 }
 
+func (a GitHubAdapter) postJSON(path string, payload any, target any) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	body, _, err := a.do(http.MethodPost, path, "application/vnd.github+json", strings.NewReader(string(encoded)))
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(body, target); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (a GitHubAdapter) getText(pathOrURL string) (string, string, error) {
 	body, finalURL, err := a.get(pathOrURL, "application/vnd.github+json")
 	if err != nil {
@@ -230,17 +297,24 @@ func (a GitHubAdapter) getText(pathOrURL string) (string, string, error) {
 }
 
 func (a GitHubAdapter) get(pathOrURL string, accept string) ([]byte, string, error) {
+	return a.do(http.MethodGet, pathOrURL, accept, nil)
+}
+
+func (a GitHubAdapter) do(method string, pathOrURL string, accept string, requestBody io.Reader) ([]byte, string, error) {
 	requestURL := pathOrURL
 	if !strings.HasPrefix(pathOrURL, "http://") && !strings.HasPrefix(pathOrURL, "https://") {
 		requestURL = a.baseURL + pathOrURL
 	}
-	httpReq, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	httpReq, err := http.NewRequest(method, requestURL, requestBody)
 	if err != nil {
 		return nil, "", err
 	}
 	httpReq.Header.Set("Accept", accept)
 	httpReq.Header.Set("Authorization", "Bearer "+a.token)
 	httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if requestBody != nil {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
 
 	httpResp, err := a.client.Do(httpReq)
 	if err != nil {
@@ -287,6 +361,15 @@ func githubRefArg(args map[string]any) (string, error) {
 	return "", fmt.Errorf("github ci.get_checks requires ref, commit_sha, sha, head_sha, or pr_number argument")
 }
 
+func githubHeadBranchArg(args map[string]any) (string, bool) {
+	for _, key := range []string{"head", "head_branch", "branch"} {
+		if value, ok := stringArg(args, key); ok {
+			return value, true
+		}
+	}
+	return "", false
+}
+
 func stringArg(args map[string]any, key string) (string, bool) {
 	value, ok := args[key]
 	if !ok {
@@ -330,6 +413,18 @@ func optionalIntArg(args map[string]any, key string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func optionalBoolArg(args map[string]any, key string, fallback bool) bool {
+	value, ok := args[key]
+	if !ok {
+		return fallback
+	}
+	typed, ok := value.(bool)
+	if !ok {
+		return fallback
+	}
+	return typed
 }
 
 func combineGitHubCheckStatus(current string, checkStatus string, conclusion string) string {
@@ -396,6 +491,16 @@ type githubPullListItem struct {
 	User         struct {
 		Login string `json:"login"`
 	} `json:"user"`
+}
+
+type githubCreatePullResponse struct {
+	Number  int    `json:"number"`
+	Title   string `json:"title"`
+	HTMLURL string `json:"html_url"`
+	Draft   bool   `json:"draft"`
+	Head    struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
 }
 
 func (a GitHubAdapter) BaseURL() string {

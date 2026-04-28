@@ -159,6 +159,35 @@ func TestCallToolRejectsInvalidGitHubCIRequestBeforeAdapter(t *testing.T) {
 	}
 }
 
+func TestCallToolRejectsInvalidGitHubDraftPRRequestBeforeAdapter(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(GitHubProviderOverrides())
+	svc := NewServiceWithOptions(ServiceOptions{
+		Registry: registry,
+		Adapters: DefaultAdapterRegistryWithGitHub(GitHubAdapterConfig{
+			Token: "test-token",
+		}),
+	})
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "code_host",
+		Action:      "create_draft_pr",
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"title":      "Draft: Revert backend database pool config",
+		},
+	})
+	if result.Status != DecisionInvalid {
+		t.Fatalf("expected invalid, got %q", result.Status)
+	}
+	if result.Reason != "github code_host.create_draft_pr requires head, head_branch, or branch argument" {
+		t.Fatalf("unexpected validation reason: %q", result.Reason)
+	}
+}
+
 func TestCallToolRequiresApprovalForHighRiskAction(t *testing.T) {
 	svc := NewService()
 	result := svc.CallTool(ToolCallRequest{

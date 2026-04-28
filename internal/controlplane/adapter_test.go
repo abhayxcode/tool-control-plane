@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -74,19 +75,95 @@ func TestGitHubAdapterRequiresToken(t *testing.T) {
 	}
 }
 
-func TestGitHubAdapterReportsSkeletonForUnimplementedSupportedCapabilities(t *testing.T) {
+func TestGitHubAdapterRejectsUnsupportedCapabilities(t *testing.T) {
 	adapter := NewGitHubAdapter(GitHubAdapterConfig{
 		Token: "test-token",
 	})
 	_, err := adapter.Execute(CapabilityDefinition{
-		ID:       "code_host.create_draft_pr",
+		ID:       "deploy.rollback",
 		Provider: GitHubProvider,
 	}, ToolCallRequest{})
 	if err == nil {
-		t.Fatalf("expected skeleton implementation error")
+		t.Fatalf("expected unsupported capability error")
 	}
-	if err.Error() != "github adapter live execution is not implemented for 'code_host.create_draft_pr' yet" {
+	if err.Error() != "github adapter does not support capability 'deploy.rollback'" {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
+	var sawAuth bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/repos/acme/backend/pulls" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") == "Bearer test-token" {
+			sawAuth = true
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		if payload["title"] != "Draft: Revert backend database pool config" {
+			t.Fatalf("unexpected title: %#v", payload["title"])
+		}
+		if payload["head"] != "majdoor/revert-db-pool-config" {
+			t.Fatalf("unexpected head branch: %#v", payload["head"])
+		}
+		if payload["base"] != "main" {
+			t.Fatalf("unexpected base branch: %#v", payload["base"])
+		}
+		if payload["draft"] != true {
+			t.Fatalf("expected draft PR")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{
+			"number": 999,
+			"title": "Draft: Revert backend database pool config",
+			"html_url": "https://github.com/acme/backend/pull/999",
+			"draft": true,
+			"head": {"ref": "majdoor/revert-db-pool-config"}
+		}`))
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "code_host.create_draft_pr",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"title":      "Draft: Revert backend database pool config",
+			"branch":     "majdoor/revert-db-pool-config",
+			"body":       "Validated patch artifact attached to agent run.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected draft PR result, got error: %v", err)
+	}
+	if !sawAuth {
+		t.Fatalf("expected authorization header")
+	}
+	if result["pr_number"] != 999 {
+		t.Fatalf("expected PR number, got %#v", result["pr_number"])
+	}
+	if result["url"] != "https://github.com/acme/backend/pull/999" {
+		t.Fatalf("expected PR URL, got %#v", result["url"])
+	}
+	if result["branch"] != "majdoor/revert-db-pool-config" {
+		t.Fatalf("expected branch in result, got %#v", result["branch"])
+	}
+	if result["draft"] != true {
+		t.Fatalf("expected draft flag")
 	}
 }
 

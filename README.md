@@ -52,9 +52,9 @@ GitHub adapter:
 - set `GITHUB_TOKEN` before using the GitHub adapter
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
 - `code_host.get_recent_changes` is implemented against recent merged GitHub pull requests
+- `code_host.create_draft_pr` is implemented against GitHub pull request creation and expects the head branch to already exist
 - `ci.get_checks` is implemented against GitHub REST check runs
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
-- `code_host.create_draft_pr` still returns an explicit not-implemented error in the GitHub adapter
 
 `code_host.get_recent_changes` accepts:
 
@@ -62,6 +62,16 @@ GitHub adapter:
 - or `owner` and `repo`
 - optional `branch`
 - optional `limit`, capped at 20
+
+`code_host.create_draft_pr` accepts:
+
+- `repository`: `owner/repo`
+- or `owner` and `repo`
+- `title`
+- `head`, `head_branch`, or `branch`
+- optional `base` or `base_branch`, defaulting to `main`
+- optional `body`
+- optional `draft`, defaulting to `true`
 
 `ci.get_checks` accepts either:
 
