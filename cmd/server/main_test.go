@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -126,6 +128,7 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_ADDR", ":4200")
 	t.Setenv("TOOL_CONTROL_PLANE_API_TOKEN", "secret-token")
 	t.Setenv("TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE", "12")
+	t.Setenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT", "2s")
 	t.Setenv("TOOL_CONTROL_PLANE_STORE", "sqlite")
 	t.Setenv("TOOL_CONTROL_PLANE_SQLITE_PATH", "/tmp/controlplane.sqlite3")
 	t.Setenv("TOOL_CONTROL_PLANE_CODE_PROVIDER", "github")
@@ -145,6 +148,9 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.RateLimitPerMinute != 12 {
 		t.Fatalf("unexpected rate limit: %d", config.RateLimitPerMinute)
 	}
+	if config.ShutdownTimeout != 2*time.Second {
+		t.Fatalf("unexpected shutdown timeout: %s", config.ShutdownTimeout)
+	}
 	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
 		t.Fatalf("unexpected store config")
 	}
@@ -158,6 +164,38 @@ func TestConfigFromEnvRejectsInvalidRateLimit(t *testing.T) {
 	_, err := configFromEnv()
 	if err == nil {
 		t.Fatalf("expected invalid rate limit error")
+	}
+}
+
+func TestConfigFromEnvRejectsInvalidShutdownTimeout(t *testing.T) {
+	t.Setenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT", "nope")
+	_, err := configFromEnv()
+	if err == nil {
+		t.Fatalf("expected invalid shutdown timeout error")
+	}
+}
+
+func TestRunHTTPServerShutsDownWhenContextCancels(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	server := newHTTPServer(Config{Addr: listener.Addr().String()}, newMux(controlplane.NewService()))
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runHTTPServerOnListener(ctx, server, listener, time.Second)
+	}()
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected graceful shutdown, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("server did not shut down")
 	}
 }
 

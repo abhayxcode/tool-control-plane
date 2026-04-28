@@ -13,6 +13,7 @@ import (
 
 type Config struct {
 	Addr               string
+	ShutdownTimeout    time.Duration
 	APIToken           string
 	RateLimitPerMinute int
 	Store              string
@@ -24,13 +25,22 @@ type Config struct {
 
 func configFromEnv() (Config, error) {
 	config := Config{
-		Addr:          envOrDefault("TOOL_CONTROL_PLANE_ADDR", ":4100"),
-		APIToken:      os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"),
-		Store:         os.Getenv("TOOL_CONTROL_PLANE_STORE"),
-		SQLitePath:    os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
-		CodeProvider:  os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
-		GitHubToken:   os.Getenv("GITHUB_TOKEN"),
-		GitHubBaseURL: os.Getenv("GITHUB_API_BASE_URL"),
+		Addr:            envOrDefault("TOOL_CONTROL_PLANE_ADDR", ":4100"),
+		ShutdownTimeout: 10 * time.Second,
+		APIToken:        os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"),
+		Store:           os.Getenv("TOOL_CONTROL_PLANE_STORE"),
+		SQLitePath:      os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
+		CodeProvider:    os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
+		GitHubToken:     os.Getenv("GITHUB_TOKEN"),
+		GitHubBaseURL:   os.Getenv("GITHUB_API_BASE_URL"),
+	}
+	rawShutdownTimeout := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT"))
+	if rawShutdownTimeout != "" {
+		timeout, err := time.ParseDuration(rawShutdownTimeout)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT: %w", err)
+		}
+		config.ShutdownTimeout = timeout
 	}
 	rawRateLimit := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE"))
 	if rawRateLimit != "" {

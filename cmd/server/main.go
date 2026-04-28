@@ -6,10 +6,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/abhayxcode/tool-control-plane/api"
@@ -30,9 +33,14 @@ func main() {
 		log.Fatal(err)
 	}
 	handler := newHandler(config, svc)
+	server := newHTTPServer(config, handler)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	log.Printf("tool-control-plane listening on %s", config.Addr)
-	log.Fatal(http.ListenAndServe(config.Addr, handler))
+	if err := runHTTPServer(ctx, server, config.ShutdownTimeout); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func newMux(svc *controlplane.Service) *http.ServeMux {
