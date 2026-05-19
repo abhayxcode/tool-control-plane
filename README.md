@@ -54,7 +54,7 @@ GitHub adapter:
 - set `GITHUB_TOKEN` before using the GitHub adapter
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
 - `code_host.get_recent_changes` is implemented against recent merged GitHub pull requests
-- `code_host.create_draft_pr` is implemented against GitHub pull request creation and expects the head branch to already exist
+- `code_host.create_draft_pr` is implemented against GitHub pull request creation; when `files` are provided it creates the head branch from the base branch and upserts file contents before opening the PR
 - `ci.get_checks` is implemented against GitHub REST check runs
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
 
@@ -74,6 +74,9 @@ GitHub adapter:
 - optional `base` or `base_branch`, defaulting to `main`
 - optional `body`
 - optional `draft`, defaulting to `true`
+- optional `commit_message`, used when writing files
+- optional `files` as `{ "path/to/file": "content" }` or `[{ "path": "path/to/file", "content": "content" }]`
+- optional `file_path` plus `file_content` for a single file
 
 It returns PR metadata including `pr_number`, `repository`, `branch`, `base`, `head_sha`, `url`, and `source_url` when GitHub includes those values.
 

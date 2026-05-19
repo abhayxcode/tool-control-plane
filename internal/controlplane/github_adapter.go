@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,11 @@ import (
 
 const GitHubProvider = "github"
 const githubLogExcerptLimit = 8000
+
+type githubFileChange struct {
+	Path    string
+	Content string
+}
 
 type GitHubAdapterConfig struct {
 	Token   string
@@ -83,6 +89,22 @@ func (a GitHubAdapter) createDraftPR(req ToolCallRequest) (map[string]any, error
 	}
 	body, _ := stringArg(req.Arguments, "body")
 	draft := optionalBoolArg(req.Arguments, "draft", true)
+	files, hasFiles, err := githubFileChangesArg(req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	if hasFiles {
+		commitMessage, ok := stringArg(req.Arguments, "commit_message")
+		if !ok {
+			commitMessage = fmt.Sprintf("Apply %s changes", head)
+		}
+		if err := a.ensureGitHubBranch(owner, repo, base, head); err != nil {
+			return nil, err
+		}
+		if err := a.upsertGitHubFiles(owner, repo, head, commitMessage, files); err != nil {
+			return nil, err
+		}
+	}
 
 	payload := map[string]any{
 		"title": title,
@@ -257,6 +279,90 @@ func (a GitHubAdapter) getLogs(req ToolCallRequest) (map[string]any, error) {
 	}, nil
 }
 
+func (a GitHubAdapter) ensureGitHubBranch(owner string, repo string, base string, head string) error {
+	headPath := fmt.Sprintf("/repos/%s/%s/git/ref/heads/%s", url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(head))
+	if exists, err := a.githubRefExists(headPath); err != nil {
+		return err
+	} else if exists {
+		return nil
+	}
+
+	var baseRef githubRefResponse
+	basePath := fmt.Sprintf("/repos/%s/%s/git/ref/heads/%s", url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(base))
+	if err := a.getJSON(basePath, &baseRef); err != nil {
+		return err
+	}
+	if baseRef.Object.SHA == "" {
+		return fmt.Errorf("github base branch %s did not include object SHA", base)
+	}
+
+	payload := map[string]any{
+		"ref": fmt.Sprintf("refs/heads/%s", head),
+		"sha": baseRef.Object.SHA,
+	}
+	var created githubRefResponse
+	if err := a.postJSON(fmt.Sprintf("/repos/%s/%s/git/refs", url.PathEscape(owner), url.PathEscape(repo)), payload, &created); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a GitHubAdapter) githubRefExists(path string) (bool, error) {
+	body, _, status, err := a.doStatus(http.MethodGet, path, "application/vnd.github+json", nil)
+	if err != nil {
+		return false, err
+	}
+	if status == http.StatusNotFound {
+		return false, nil
+	}
+	if status < 200 || status > 299 {
+		return false, fmt.Errorf("github API request failed with status %d: %s", status, strings.TrimSpace(string(body)))
+	}
+	return true, nil
+}
+
+func (a GitHubAdapter) upsertGitHubFiles(owner string, repo string, branch string, commitMessage string, files []githubFileChange) error {
+	for _, file := range files {
+		existingSHA, err := a.githubFileSHA(owner, repo, branch, file.Path)
+		if err != nil {
+			return err
+		}
+		payload := map[string]any{
+			"message": commitMessage,
+			"content": base64.StdEncoding.EncodeToString([]byte(file.Content)),
+			"branch":  branch,
+		}
+		if existingSHA != "" {
+			payload["sha"] = existingSHA
+		}
+		var response map[string]any
+		contentPath := githubContentAPIPath(owner, repo, file.Path)
+		if err := a.putJSON(contentPath, payload, &response); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a GitHubAdapter) githubFileSHA(owner string, repo string, branch string, filePath string) (string, error) {
+	requestPath := githubContentAPIPath(owner, repo, filePath) + "?ref=" + url.QueryEscape(branch)
+	body, _, status, err := a.doStatus(http.MethodGet, requestPath, "application/vnd.github+json", nil)
+	if err != nil {
+		return "", err
+	}
+	if status == http.StatusNotFound {
+		return "", nil
+	}
+	if status < 200 || status > 299 {
+		return "", fmt.Errorf("github API request failed with status %d: %s", status, strings.TrimSpace(string(body)))
+	}
+	var response githubContentResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", err
+	}
+	return response.SHA, nil
+}
+
 func (a GitHubAdapter) pullRequestHeadSHA(owner string, repo string, prNumber int) (string, error) {
 	var response githubPullResponse
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), prNumber)
@@ -281,11 +387,19 @@ func (a GitHubAdapter) getJSON(path string, target any) error {
 }
 
 func (a GitHubAdapter) postJSON(path string, payload any, target any) error {
+	return a.writeJSON(http.MethodPost, path, payload, target)
+}
+
+func (a GitHubAdapter) putJSON(path string, payload any, target any) error {
+	return a.writeJSON(http.MethodPut, path, payload, target)
+}
+
+func (a GitHubAdapter) writeJSON(method string, path string, payload any, target any) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	body, _, err := a.do(http.MethodPost, path, "application/vnd.github+json", strings.NewReader(string(encoded)))
+	body, _, err := a.do(method, path, "application/vnd.github+json", strings.NewReader(string(encoded)))
 	if err != nil {
 		return err
 	}
@@ -308,13 +422,24 @@ func (a GitHubAdapter) get(pathOrURL string, accept string) ([]byte, string, err
 }
 
 func (a GitHubAdapter) do(method string, pathOrURL string, accept string, requestBody io.Reader) ([]byte, string, error) {
+	body, requestURL, status, err := a.doStatus(method, pathOrURL, accept, requestBody)
+	if err != nil {
+		return nil, "", err
+	}
+	if status < 200 || status > 299 {
+		return nil, "", fmt.Errorf("github API request failed with status %d: %s", status, strings.TrimSpace(string(body)))
+	}
+	return body, requestURL, nil
+}
+
+func (a GitHubAdapter) doStatus(method string, pathOrURL string, accept string, requestBody io.Reader) ([]byte, string, int, error) {
 	requestURL := pathOrURL
 	if !strings.HasPrefix(pathOrURL, "http://") && !strings.HasPrefix(pathOrURL, "https://") {
 		requestURL = a.baseURL + pathOrURL
 	}
 	httpReq, err := http.NewRequest(method, requestURL, requestBody)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	httpReq.Header.Set("Accept", accept)
 	httpReq.Header.Set("Authorization", "Bearer "+a.token)
@@ -325,18 +450,15 @@ func (a GitHubAdapter) do(method string, pathOrURL string, accept string, reques
 
 	httpResp, err := a.client.Do(httpReq)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer httpResp.Body.Close()
 
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
-	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
-		return nil, "", fmt.Errorf("github API request failed with status %d: %s", httpResp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	return body, requestURL, nil
+	return body, requestURL, httpResp.StatusCode, nil
 }
 
 func githubRepoArgs(action string, args map[string]any) (string, string, error) {
@@ -375,6 +497,75 @@ func githubHeadBranchArg(args map[string]any) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func githubFileChangesArg(args map[string]any) ([]githubFileChange, bool, error) {
+	if path, ok := stringArg(args, "file_path"); ok {
+		content, contentOK := stringArg(args, "file_content")
+		if !contentOK {
+			return nil, true, fmt.Errorf("github code_host.create_draft_pr file_path requires file_content")
+		}
+		file, err := newGitHubFileChange(path, content)
+		return []githubFileChange{file}, true, err
+	}
+
+	raw, ok := args["files"]
+	if !ok {
+		return nil, false, nil
+	}
+	switch typed := raw.(type) {
+	case map[string]any:
+		files := make([]githubFileChange, 0, len(typed))
+		for filePath, content := range typed {
+			text, ok := content.(string)
+			if !ok {
+				return nil, true, fmt.Errorf("github code_host.create_draft_pr files values must be strings")
+			}
+			file, err := newGitHubFileChange(filePath, text)
+			if err != nil {
+				return nil, true, err
+			}
+			files = append(files, file)
+		}
+		return files, len(files) > 0, nil
+	case []any:
+		files := make([]githubFileChange, 0, len(typed))
+		for _, item := range typed {
+			object, ok := item.(map[string]any)
+			if !ok {
+				return nil, true, fmt.Errorf("github code_host.create_draft_pr files entries must be objects")
+			}
+			path, pathOK := stringArg(object, "path")
+			content, contentOK := stringArg(object, "content")
+			if !pathOK || !contentOK {
+				return nil, true, fmt.Errorf("github code_host.create_draft_pr files entries require path and content")
+			}
+			file, err := newGitHubFileChange(path, content)
+			if err != nil {
+				return nil, true, err
+			}
+			files = append(files, file)
+		}
+		return files, len(files) > 0, nil
+	default:
+		return nil, true, fmt.Errorf("github code_host.create_draft_pr files must be an object or array")
+	}
+}
+
+func newGitHubFileChange(filePath string, content string) (githubFileChange, error) {
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" || strings.HasPrefix(filePath, "/") || strings.Contains(filePath, "..") {
+		return githubFileChange{}, fmt.Errorf("github file path must be a relative repository path without '..'")
+	}
+	return githubFileChange{Path: filePath, Content: content}, nil
+}
+
+func githubContentAPIPath(owner string, repo string, filePath string) string {
+	parts := strings.Split(filePath, "/")
+	for index, part := range parts {
+		parts[index] = url.PathEscape(part)
+	}
+	return fmt.Sprintf("/repos/%s/%s/contents/%s", url.PathEscape(owner), url.PathEscape(repo), strings.Join(parts, "/"))
 }
 
 func stringArg(args map[string]any, key string) (string, bool) {
@@ -486,6 +677,16 @@ type githubPullResponse struct {
 	Head struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
+}
+
+type githubRefResponse struct {
+	Object struct {
+		SHA string `json:"sha"`
+	} `json:"object"`
+}
+
+type githubContentResponse struct {
+	SHA string `json:"sha"`
 }
 
 type githubPullListItem struct {

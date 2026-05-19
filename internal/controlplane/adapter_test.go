@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -176,6 +177,124 @@ func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 	}
 	if result["draft"] != true {
 		t.Fatalf("expected draft flag")
+	}
+}
+
+func TestGitHubAdapterCreatesBranchFilesAndDraftPR(t *testing.T) {
+	var createdBranch bool
+	var wroteFile bool
+	var createdPR bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		requestPath := r.URL.EscapedPath()
+		switch {
+		case r.Method == http.MethodGet && requestPath == "/repos/acme/backend/git/ref/heads/majdoor%2Fconfig":
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"not found"}`))
+		case r.Method == http.MethodGet && requestPath == "/repos/acme/backend/git/ref/heads/main":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"object":{"sha":"base-sha"}}`))
+		case r.Method == http.MethodPost && requestPath == "/repos/acme/backend/git/refs":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode branch payload: %v", err)
+			}
+			if payload["ref"] != "refs/heads/majdoor/config" {
+				t.Fatalf("unexpected branch ref: %#v", payload["ref"])
+			}
+			if payload["sha"] != "base-sha" {
+				t.Fatalf("unexpected branch sha: %#v", payload["sha"])
+			}
+			createdBranch = true
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"object":{"sha":"base-sha"}}`))
+		case r.Method == http.MethodGet && requestPath == "/repos/acme/backend/contents/config/database.yaml":
+			if r.URL.Query().Get("ref") != "majdoor/config" {
+				t.Fatalf("unexpected content ref: %q", r.URL.Query().Get("ref"))
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"sha":"existing-file-sha"}`))
+		case r.Method == http.MethodPut && requestPath == "/repos/acme/backend/contents/config/database.yaml":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode file payload: %v", err)
+			}
+			if payload["message"] != "Update database pool config" {
+				t.Fatalf("unexpected commit message: %#v", payload["message"])
+			}
+			if payload["branch"] != "majdoor/config" {
+				t.Fatalf("unexpected file branch: %#v", payload["branch"])
+			}
+			if payload["sha"] != "existing-file-sha" {
+				t.Fatalf("unexpected file sha: %#v", payload["sha"])
+			}
+			decoded, err := base64.StdEncoding.DecodeString(payload["content"].(string))
+			if err != nil {
+				t.Fatalf("decode content: %v", err)
+			}
+			if string(decoded) != "max_open_connections: 50\n" {
+				t.Fatalf("unexpected file content: %q", string(decoded))
+			}
+			wroteFile = true
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"content":{"sha":"new-file-sha"}}`))
+		case r.Method == http.MethodPost && requestPath == "/repos/acme/backend/pulls":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode pull payload: %v", err)
+			}
+			if payload["head"] != "majdoor/config" {
+				t.Fatalf("unexpected pull head: %#v", payload["head"])
+			}
+			createdPR = true
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{
+				"number": 1000,
+				"title": "Draft: Update database pool config",
+				"html_url": "https://github.com/acme/backend/pull/1000",
+				"draft": true,
+				"head": {
+					"ref": "majdoor/config",
+					"sha": "head-sha-1000"
+				}
+			}`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "code_host.create_draft_pr",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository":     "acme/backend",
+			"title":          "Draft: Update database pool config",
+			"head":           "majdoor/config",
+			"base":           "main",
+			"commit_message": "Update database pool config",
+			"files": map[string]any{
+				"config/database.yaml": "max_open_connections: 50\n",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected branch, file, and PR result, got error: %v", err)
+	}
+	if !createdBranch || !wroteFile || !createdPR {
+		t.Fatalf("expected branch/file/pr operations, got branch=%v file=%v pr=%v", createdBranch, wroteFile, createdPR)
+	}
+	if result["pr_number"] != 1000 {
+		t.Fatalf("expected PR number, got %#v", result["pr_number"])
+	}
+	if result["head_sha"] != "head-sha-1000" {
+		t.Fatalf("expected head SHA, got %#v", result["head_sha"])
 	}
 }
 
