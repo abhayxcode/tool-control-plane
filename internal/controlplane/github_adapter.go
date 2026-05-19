@@ -104,12 +104,19 @@ func (a GitHubAdapter) createDraftPR(req ToolCallRequest) (map[string]any, error
 		branch = head
 	}
 	return map[string]any{
-		"pr_number": response.Number,
-		"branch":    branch,
-		"title":     response.Title,
-		"url":       response.HTMLURL,
-		"draft":     response.Draft,
-		"evidence":  fmt.Sprintf("GitHub draft PR #%d created for %s/%s from %s into %s.", response.Number, owner, repo, head, base),
+		"pr_number":  response.Number,
+		"repository": fmt.Sprintf("%s/%s", owner, repo),
+		"owner":      owner,
+		"repo":       repo,
+		"branch":     branch,
+		"head":       branch,
+		"base":       base,
+		"head_sha":   response.Head.SHA,
+		"title":      response.Title,
+		"url":        response.HTMLURL,
+		"source_url": response.HTMLURL,
+		"draft":      response.Draft,
+		"evidence":   fmt.Sprintf("GitHub draft PR #%d created for %s/%s from %s into %s.", response.Number, owner, repo, head, base),
 	}, nil
 }
 
@@ -500,6 +507,7 @@ type githubCreatePullResponse struct {
 	Draft   bool   `json:"draft"`
 	Head    struct {
 		Ref string `json:"ref"`
+		SHA string `json:"sha"`
 	} `json:"head"`
 }
 

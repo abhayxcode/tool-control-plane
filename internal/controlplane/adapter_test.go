@@ -126,7 +126,10 @@ func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 			"title": "Draft: Revert backend database pool config",
 			"html_url": "https://github.com/acme/backend/pull/999",
 			"draft": true,
-			"head": {"ref": "majdoor/revert-db-pool-config"}
+			"head": {
+				"ref": "majdoor/revert-db-pool-config",
+				"sha": "head-sha-999"
+			}
 		}`))
 	}))
 	defer server.Close()
@@ -161,6 +164,15 @@ func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 	}
 	if result["branch"] != "majdoor/revert-db-pool-config" {
 		t.Fatalf("expected branch in result, got %#v", result["branch"])
+	}
+	if result["repository"] != "acme/backend" {
+		t.Fatalf("expected repository in result, got %#v", result["repository"])
+	}
+	if result["base"] != "main" {
+		t.Fatalf("expected base branch in result, got %#v", result["base"])
+	}
+	if result["head_sha"] != "head-sha-999" {
+		t.Fatalf("expected head SHA in result, got %#v", result["head_sha"])
 	}
 	if result["draft"] != true {
 		t.Fatalf("expected draft flag")

@@ -75,6 +75,8 @@ GitHub adapter:
 - optional `body`
 - optional `draft`, defaulting to `true`
 
+It returns PR metadata including `pr_number`, `repository`, `branch`, `base`, `head_sha`, `url`, and `source_url` when GitHub includes those values.
+
 `ci.get_checks` accepts either:
 
 - `repository`: `owner/repo`
