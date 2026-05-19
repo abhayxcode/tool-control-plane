@@ -188,6 +188,51 @@ func TestCallToolRejectsInvalidGitHubDraftPRRequestBeforeAdapter(t *testing.T) {
 	}
 }
 
+func TestCallToolValidatesDraftPRFilesPayload(t *testing.T) {
+	svc := NewService()
+	valid := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "code_host",
+		Action:      "create_draft_pr",
+		Arguments: map[string]any{
+			"title":          "Draft: Revert backend database pool config",
+			"commit_message": "Revert backend database pool config",
+			"files": map[string]any{
+				"config/database.yaml": "max_open_connections: 50\n",
+			},
+		},
+	})
+	if valid.Status != "success" {
+		t.Fatalf("expected valid files payload, got %q: %s", valid.Status, valid.Reason)
+	}
+
+	invalid := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_124",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "code_host",
+		Action:      "create_draft_pr",
+		Arguments: map[string]any{
+			"title": "Draft: Revert backend database pool config",
+			"files": map[string]any{
+				"config/database.yaml": 50,
+			},
+		},
+	})
+	if invalid.Status != DecisionInvalid {
+		t.Fatalf("expected invalid files payload, got %q", invalid.Status)
+	}
+	if invalid.Reason != "code_host.create_draft_pr files values must be non-empty strings" {
+		t.Fatalf("unexpected validation reason: %q", invalid.Reason)
+	}
+}
+
 func TestCallToolRequiresApprovalForHighRiskAction(t *testing.T) {
 	svc := NewService()
 	result := svc.CallTool(ToolCallRequest{

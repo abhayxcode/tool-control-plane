@@ -35,6 +35,9 @@ func (v StaticRequestValidator) Validate(req ToolCallRequest, definition Capabil
 		if !hasStringArg(req.Arguments, "title") {
 			return fmt.Errorf("code_host.create_draft_pr requires title argument")
 		}
+		if err := validateDraftPRFileArgs(req.Arguments); err != nil {
+			return err
+		}
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
 			return fmt.Errorf("github code_host.create_draft_pr requires repository or owner and repo arguments")
 		}
@@ -78,4 +81,45 @@ func hasStringArg(args map[string]any, key string) bool {
 	}
 	text, ok := value.(string)
 	return ok && strings.TrimSpace(text) != ""
+}
+
+func validateDraftPRFileArgs(args map[string]any) error {
+	if _, ok := args["file_path"]; ok {
+		if !hasStringArg(args, "file_path") {
+			return fmt.Errorf("code_host.create_draft_pr file_path must be a non-empty string")
+		}
+		if !hasStringArg(args, "file_content") {
+			return fmt.Errorf("code_host.create_draft_pr file_path requires file_content")
+		}
+	}
+
+	rawFiles, ok := args["files"]
+	if !ok {
+		return nil
+	}
+	switch files := rawFiles.(type) {
+	case map[string]any:
+		for path, content := range files {
+			if strings.TrimSpace(path) == "" {
+				return fmt.Errorf("code_host.create_draft_pr files paths must be non-empty strings")
+			}
+			text, ok := content.(string)
+			if !ok || text == "" {
+				return fmt.Errorf("code_host.create_draft_pr files values must be non-empty strings")
+			}
+		}
+	case []any:
+		for _, item := range files {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				return fmt.Errorf("code_host.create_draft_pr files entries must be objects")
+			}
+			if !hasStringArg(entry, "path") || !hasStringArg(entry, "content") {
+				return fmt.Errorf("code_host.create_draft_pr files entries require path and content")
+			}
+		}
+	default:
+		return fmt.Errorf("code_host.create_draft_pr files must be an object or array")
+	}
+	return nil
 }
