@@ -568,6 +568,35 @@ func TestGitHubAdapterGetsChecksForPullRequestNumber(t *testing.T) {
 					{"name": "unit-tests", "status": "completed", "conclusion": "failure", "html_url": "https://github.com/acme/backend/runs/3"}
 				]
 			}`))
+		case "/repos/acme/backend/actions/runs":
+			if r.URL.Query().Get("head_sha") != "head-sha-42" {
+				t.Fatalf("expected head_sha query, got %q", r.URL.Query().Get("head_sha"))
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{
+				"total_count": 1,
+				"workflow_runs": [{
+					"id": 9001,
+					"name": "CI",
+					"status": "completed",
+					"conclusion": "failure",
+					"html_url": "https://github.com/acme/backend/actions/runs/9001",
+					"head_sha": "head-sha-42"
+				}]
+			}`))
+		case "/repos/acme/backend/actions/runs/9001/jobs":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{
+				"total_count": 1,
+				"jobs": [{
+					"id": 7001,
+					"name": "unit-tests",
+					"status": "completed",
+					"conclusion": "failure",
+					"html_url": "https://github.com/acme/backend/actions/runs/9001/job/7001",
+					"logs_url": "https://api.github.test/repos/acme/backend/actions/jobs/7001/logs"
+				}]
+			}`))
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -597,6 +626,16 @@ func TestGitHubAdapterGetsChecksForPullRequestNumber(t *testing.T) {
 	}
 	if result["commit_sha"] != "head-sha-42" {
 		t.Fatalf("expected PR head SHA, got %#v", result["commit_sha"])
+	}
+	if result["job_id"] != int64(7001) {
+		t.Fatalf("expected failed job id, got %#v", result["job_id"])
+	}
+	if result["logs_url"] != "https://api.github.test/repos/acme/backend/actions/jobs/7001/logs" {
+		t.Fatalf("expected logs URL, got %#v", result["logs_url"])
+	}
+	checks, ok := result["checks"].([]map[string]any)
+	if !ok || checks[0]["job_id"] != int64(7001) {
+		t.Fatalf("expected failed check to include job metadata, got %#v", result["checks"])
 	}
 }
 

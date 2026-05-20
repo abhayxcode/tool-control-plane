@@ -59,6 +59,7 @@ GitHub adapter:
 - `code_host.get_pull_request` is implemented against GitHub pull request details and returns merge state plus head/base metadata
 - `code_host.create_draft_pr` is implemented against GitHub pull request creation; when `files` are provided it creates the head branch from the base branch and upserts file contents before opening the PR
 - `ci.get_checks` is implemented against GitHub REST check runs
+- `ci.get_checks` also attempts to discover the failed GitHub Actions job and includes `job_id`/`logs_url` when available
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
 - `deploy.get_recent_deploys` is implemented against GitHub Actions workflow runs
 
@@ -111,6 +112,8 @@ It also needs one target:
 - `sha`
 - `head_sha`
 - `pr_number`, which resolves the pull request head SHA first
+
+When checks fail, the response may include top-level `job_id`, `logs_url`, and `failed_job` fields. Matching failed check entries may also include `job_id` and `logs_url`, allowing callers to fetch logs without provider-specific discovery.
 
 `ci.get_logs` accepts either:
 

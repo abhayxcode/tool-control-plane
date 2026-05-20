@@ -419,15 +419,78 @@ func (a GitHubAdapter) getChecks(req ToolCallRequest) (map[string]any, error) {
 	if len(response.CheckRuns) == 0 {
 		status = "pending"
 	}
+	failedJob := map[string]any(nil)
+	if status == "failed" {
+		failedJob, _ = a.discoverFailedGitHubActionsJob(owner, repo, ref)
+		if failedJob != nil {
+			if jobName, ok := failedJob["name"].(string); ok && jobName != "" {
+				for index, check := range checks {
+					if check["name"] == jobName {
+						checks[index]["job_id"] = failedJob["job_id"]
+						checks[index]["logs_url"] = failedJob["logs_url"]
+						break
+					}
+				}
+			}
+		}
+	}
 
 	evidence := fmt.Sprintf("GitHub returned %d check run(s) for %s/%s@%s.", len(response.CheckRuns), owner, repo, ref)
-	return map[string]any{
+	result := map[string]any{
 		"status":     status,
 		"commit_sha": ref,
 		"checks":     checks,
 		"evidence":   evidence,
 		"source_url": sourceURL,
-	}, nil
+	}
+	if failedJob != nil {
+		result["job_id"] = failedJob["job_id"]
+		result["logs_url"] = failedJob["logs_url"]
+		result["failed_job"] = failedJob
+	}
+	return result, nil
+}
+
+func (a GitHubAdapter) discoverFailedGitHubActionsJob(owner string, repo string, headSHA string) (map[string]any, error) {
+	query := url.Values{}
+	query.Set("head_sha", headSHA)
+	query.Set("per_page", "5")
+	runsPath := fmt.Sprintf("/repos/%s/%s/actions/runs?%s", url.PathEscape(owner), url.PathEscape(repo), query.Encode())
+	var runs githubWorkflowRunsResponse
+	if err := a.getJSON(runsPath, &runs); err != nil {
+		return nil, err
+	}
+	for _, run := range runs.WorkflowRuns {
+		if run.ID == 0 {
+			continue
+		}
+		jobsPath := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/jobs?filter=latest&per_page=100", url.PathEscape(owner), url.PathEscape(repo), run.ID)
+		var jobs githubWorkflowJobsResponse
+		if err := a.getJSON(jobsPath, &jobs); err != nil {
+			return nil, err
+		}
+		for _, job := range jobs.Jobs {
+			if !isFailingGitHubConclusion(job.Conclusion, job.Status) {
+				continue
+			}
+			logsURL := job.LogsURL
+			if logsURL == "" {
+				logsURL = fmt.Sprintf("/repos/%s/%s/actions/jobs/%d/logs", url.PathEscape(owner), url.PathEscape(repo), job.ID)
+			}
+			return map[string]any{
+				"job_id":     job.ID,
+				"name":       job.Name,
+				"status":     job.Status,
+				"conclusion": job.Conclusion,
+				"url":        job.HTMLURL,
+				"source_url": job.HTMLURL,
+				"logs_url":   logsURL,
+				"run_id":     run.ID,
+				"run_url":    run.HTMLURL,
+			}, nil
+		}
+	}
+	return nil, nil
 }
 
 func (a GitHubAdapter) getLogs(req ToolCallRequest) (map[string]any, error) {
@@ -845,6 +908,14 @@ func combineGitHubCheckStatus(current string, checkStatus string, conclusion str
 	return "passed"
 }
 
+func isFailingGitHubConclusion(conclusion string, status string) bool {
+	switch conclusion {
+	case "action_required", "cancelled", "failure", "startup_failure", "timed_out":
+		return true
+	}
+	return status == "completed" && conclusion != "" && conclusion != "success" && conclusion != "neutral" && conclusion != "skipped"
+}
+
 func normalizeGitHubWorkflowRunStatus(status string, conclusion string) string {
 	switch conclusion {
 	case "failure", "cancelled", "timed_out", "action_required", "startup_failure":
@@ -927,6 +998,18 @@ type githubWorkflowRunsResponse struct {
 		RunStartedAt string `json:"run_started_at"`
 		WorkflowID   int64  `json:"workflow_id"`
 	} `json:"workflow_runs"`
+}
+
+type githubWorkflowJobsResponse struct {
+	TotalCount int `json:"total_count"`
+	Jobs       []struct {
+		ID         int64  `json:"id"`
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+		HTMLURL    string `json:"html_url"`
+		LogsURL    string `json:"logs_url"`
+	} `json:"jobs"`
 }
 
 type githubPullResponse struct {
