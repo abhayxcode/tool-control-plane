@@ -80,6 +80,16 @@ func defaultMockFixtures() map[string]map[string]any {
 			"source_url": "https://github.com/acme/backend/blob/main/config/database.yaml",
 			"evidence":   "Read config/database.yaml from mock repository fixture.",
 		},
+		"code_host.get_pull_request": {
+			"pr_number": 999,
+			"state":     "open",
+			"merged":    false,
+			"branch":    "majdoor/revert-db-pool-config",
+			"base":      "main",
+			"head_sha":  "mock-sha-999",
+			"url":       "https://github.com/acme/backend/pull/999",
+			"evidence":  "Mock draft PR #999 is open and not merged.",
+		},
 		"runtime.get_workload_status": {
 			"pods_ready":             "5/8",
 			"restart_count_last_30m": 12,

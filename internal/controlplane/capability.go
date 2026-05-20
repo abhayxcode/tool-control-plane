@@ -107,6 +107,14 @@ func DefaultCapabilityRegistry() CapabilityRegistry {
 			Description: "Read a repository file for patch planning and sandbox input hydration.",
 		},
 		{
+			ID:          "code_host.get_pull_request",
+			Capability:  "code_host",
+			Action:      "get_pull_request",
+			RiskLevel:   RiskRead,
+			Provider:    "mock",
+			Description: "Read pull request merge state and head/base metadata.",
+		},
+		{
 			ID:          "deploy.get_recent_deploys",
 			Capability:  "deploy",
 			Action:      "get_recent_deploys",

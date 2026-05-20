@@ -55,6 +55,7 @@ GitHub adapter:
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
 - `code_host.get_recent_changes` is implemented against recent merged GitHub pull requests
 - `code_host.get_file` is implemented against the GitHub Contents API and returns decoded text content for patch planning
+- `code_host.get_pull_request` is implemented against GitHub pull request details and returns merge state plus head/base metadata
 - `code_host.create_draft_pr` is implemented against GitHub pull request creation; when `files` are provided it creates the head branch from the base branch and upserts file contents before opening the PR
 - `ci.get_checks` is implemented against GitHub REST check runs
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
@@ -72,6 +73,14 @@ GitHub adapter:
 - or `owner` and `repo`
 - `path`: relative repository file path
 - optional `ref`, `branch`, or `base`, defaulting to the provider default branch
+
+`code_host.get_pull_request` accepts:
+
+- `repository`: `owner/repo`
+- or `owner` and `repo`
+- `pr_number` or `number`
+
+It returns PR metadata including `state`, `merged`, `merged_at`, `merge_commit_sha`, `branch`, `base`, `head_sha`, `url`, and `source_url` when the provider includes those values.
 
 `code_host.create_draft_pr` accepts:
 

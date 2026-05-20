@@ -62,6 +62,8 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 		return a.getRecentChanges(req)
 	case "code_host.get_file":
 		return a.getFile(req)
+	case "code_host.get_pull_request":
+		return a.getPullRequest(req)
 	case "code_host.create_draft_pr":
 		return a.createDraftPR(req)
 	default:
@@ -141,6 +143,46 @@ func (a GitHubAdapter) createDraftPR(req ToolCallRequest) (map[string]any, error
 		"source_url": response.HTMLURL,
 		"draft":      response.Draft,
 		"evidence":   fmt.Sprintf("GitHub draft PR #%d created for %s/%s from %s into %s.", response.Number, owner, repo, head, base),
+	}, nil
+}
+
+func (a GitHubAdapter) getPullRequest(req ToolCallRequest) (map[string]any, error) {
+	owner, repo, err := githubRepoArgs("code_host.get_pull_request", req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	number, err := intArg(req.Arguments, "pr_number")
+	if err != nil {
+		number, err = intArg(req.Arguments, "number")
+	}
+	if err != nil || number <= 0 {
+		return nil, fmt.Errorf("github code_host.get_pull_request requires pr_number or number argument")
+	}
+	var response githubPullDetailResponse
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), number)
+	if err := a.getJSON(path, &response); err != nil {
+		return nil, err
+	}
+	if response.Number == 0 {
+		response.Number = number
+	}
+	return map[string]any{
+		"pr_number":        response.Number,
+		"repository":       fmt.Sprintf("%s/%s", owner, repo),
+		"owner":            owner,
+		"repo":             repo,
+		"state":            response.State,
+		"merged":           response.Merged,
+		"merged_at":        response.MergedAt,
+		"merge_commit_sha": response.MergeCommitSHA,
+		"branch":           response.Head.Ref,
+		"head_sha":         response.Head.SHA,
+		"base":             response.Base.Ref,
+		"title":            response.Title,
+		"url":              response.HTMLURL,
+		"source_url":       response.HTMLURL,
+		"draft":            response.Draft,
+		"evidence":         fmt.Sprintf("GitHub PR #%d for %s/%s is %s; merged=%t.", response.Number, owner, repo, response.State, response.Merged),
 	}, nil
 }
 
@@ -785,6 +827,24 @@ type githubCreatePullResponse struct {
 	} `json:"head"`
 }
 
+type githubPullDetailResponse struct {
+	Number         int    `json:"number"`
+	Title          string `json:"title"`
+	State          string `json:"state"`
+	HTMLURL        string `json:"html_url"`
+	Draft          bool   `json:"draft"`
+	Merged         bool   `json:"merged"`
+	MergedAt       string `json:"merged_at"`
+	MergeCommitSHA string `json:"merge_commit_sha"`
+	Head           struct {
+		Ref string `json:"ref"`
+		SHA string `json:"sha"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
 func (a GitHubAdapter) BaseURL() string {
 	return a.baseURL
 }
@@ -797,6 +857,7 @@ func GitHubProviderOverrides() map[string]string {
 	return map[string]string{
 		"code_host.get_recent_changes": GitHubProvider,
 		"code_host.get_file":           GitHubProvider,
+		"code_host.get_pull_request":   GitHubProvider,
 		"code_host.create_draft_pr":    GitHubProvider,
 		"ci.get_checks":                GitHubProvider,
 		"ci.get_logs":                  GitHubProvider,

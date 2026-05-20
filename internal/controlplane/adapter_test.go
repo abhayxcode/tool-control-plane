@@ -233,6 +233,61 @@ func TestGitHubAdapterGetsFile(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapterGetsPullRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/repos/acme/backend/pulls/999" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"number": 999,
+			"title": "Draft: Revert backend database pool config",
+			"state": "closed",
+			"html_url": "https://github.com/acme/backend/pull/999",
+			"draft": false,
+			"merged": true,
+			"merged_at": "2026-07-13T07:00:00Z",
+			"merge_commit_sha": "merge-sha-999",
+			"head": {
+				"ref": "majdoor/revert-db-pool-config",
+				"sha": "head-sha-999"
+			},
+			"base": {
+				"ref": "main"
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "code_host.get_pull_request",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"pr_number":  999,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected pull request result, got error: %v", err)
+	}
+	if result["merged"] != true {
+		t.Fatalf("expected merged PR, got %#v", result["merged"])
+	}
+	if result["merge_commit_sha"] != "merge-sha-999" {
+		t.Fatalf("expected merge commit sha, got %#v", result["merge_commit_sha"])
+	}
+	if result["base"] != "main" {
+		t.Fatalf("expected base branch, got %#v", result["base"])
+	}
+}
+
 func TestGitHubAdapterCreatesBranchFilesAndDraftPR(t *testing.T) {
 	var createdBranch bool
 	var wroteFile bool
@@ -629,6 +684,7 @@ func TestGitHubProviderOverridesCodeAndCICapabilities(t *testing.T) {
 	for _, id := range []string{
 		"code_host.get_recent_changes",
 		"code_host.get_file",
+		"code_host.get_pull_request",
 		"code_host.create_draft_pr",
 		"ci.get_checks",
 		"ci.get_logs",
