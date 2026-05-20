@@ -18,6 +18,7 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	}
 
 	var foundDraftPR bool
+	var foundGetFile bool
 	for _, detail := range details {
 		if detail.ID == "code_host.create_draft_pr" {
 			foundDraftPR = true
@@ -28,9 +29,18 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 				t.Fatalf("expected mock provider, got %q", detail.Provider)
 			}
 		}
+		if detail.ID == "code_host.get_file" {
+			foundGetFile = true
+			if detail.RiskLevel != RiskRead {
+				t.Fatalf("expected get file risk %q, got %q", RiskRead, detail.RiskLevel)
+			}
+		}
 	}
 	if !foundDraftPR {
 		t.Fatalf("expected draft PR capability metadata")
+	}
+	if !foundGetFile {
+		t.Fatalf("expected get file capability metadata")
 	}
 }
 
@@ -521,5 +531,31 @@ func TestCallToolAllowsCIReadAction(t *testing.T) {
 	}
 	if result.Result["status"] != "passed" {
 		t.Fatalf("expected passed CI status, got %#v", result.Result["status"])
+	}
+}
+
+func TestCallToolAllowsCodeHostGetFileReadAction(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "code_host",
+		Action:      "get_file",
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"path":       "config/database.yaml",
+		},
+	})
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %q (%s)", result.Status, result.Reason)
+	}
+	if result.RiskLevel != "read" {
+		t.Fatalf("expected read risk, got %q", result.RiskLevel)
+	}
+	if result.Result["content"] != "max_open_connections: 5\n" {
+		t.Fatalf("expected file content, got %#v", result.Result["content"])
 	}
 }

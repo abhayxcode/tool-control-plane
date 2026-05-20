@@ -60,6 +60,8 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 		return a.getLogs(req)
 	case "code_host.get_recent_changes":
 		return a.getRecentChanges(req)
+	case "code_host.get_file":
+		return a.getFile(req)
 	case "code_host.create_draft_pr":
 		return a.createDraftPR(req)
 	default:
@@ -139,6 +141,65 @@ func (a GitHubAdapter) createDraftPR(req ToolCallRequest) (map[string]any, error
 		"source_url": response.HTMLURL,
 		"draft":      response.Draft,
 		"evidence":   fmt.Sprintf("GitHub draft PR #%d created for %s/%s from %s into %s.", response.Number, owner, repo, head, base),
+	}, nil
+}
+
+func (a GitHubAdapter) getFile(req ToolCallRequest) (map[string]any, error) {
+	owner, repo, err := githubRepoArgs("code_host.get_file", req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	filePath, ok := stringArg(req.Arguments, "path")
+	if !ok {
+		return nil, fmt.Errorf("github code_host.get_file requires path argument")
+	}
+	file, err := newGitHubFileChange(filePath, "")
+	if err != nil {
+		return nil, err
+	}
+	ref, _ := stringArg(req.Arguments, "ref")
+	if ref == "" {
+		ref, _ = stringArg(req.Arguments, "branch")
+	}
+	if ref == "" {
+		ref, _ = stringArg(req.Arguments, "base")
+	}
+	query := url.Values{}
+	if ref != "" {
+		query.Set("ref", ref)
+	}
+	path := githubContentAPIPath(owner, repo, file.Path)
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var response githubContentResponse
+	if err := a.getJSON(path, &response); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(response.Content) == "" {
+		return nil, fmt.Errorf("github content response did not include file content")
+	}
+	if response.Encoding != "" && response.Encoding != "base64" {
+		return nil, fmt.Errorf("github content response used unsupported encoding %q", response.Encoding)
+	}
+	content, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(response.Content, "\n", ""))
+	if err != nil {
+		return nil, fmt.Errorf("decode github file content: %w", err)
+	}
+	sourceURL := response.HTMLURL
+	if sourceURL == "" {
+		sourceURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", owner, repo, firstNonEmpty(ref, "HEAD"), file.Path)
+	}
+	return map[string]any{
+		"repository": fmt.Sprintf("%s/%s", owner, repo),
+		"owner":      owner,
+		"repo":       repo,
+		"path":       file.Path,
+		"ref":        ref,
+		"sha":        response.SHA,
+		"content":    string(content),
+		"source_url": sourceURL,
+		"evidence":   fmt.Sprintf("Read %s from %s/%s.", file.Path, owner, repo),
 	}, nil
 }
 
@@ -625,6 +686,15 @@ func optionalBoolArg(args map[string]any, key string, fallback bool) bool {
 	return typed
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func combineGitHubCheckStatus(current string, checkStatus string, conclusion string) string {
 	failingConclusions := map[string]bool{
 		"action_required": true,
@@ -686,7 +756,10 @@ type githubRefResponse struct {
 }
 
 type githubContentResponse struct {
-	SHA string `json:"sha"`
+	SHA      string `json:"sha"`
+	Content  string `json:"content"`
+	Encoding string `json:"encoding"`
+	HTMLURL  string `json:"html_url"`
 }
 
 type githubPullListItem struct {
@@ -723,6 +796,7 @@ func (a GitHubAdapter) HTTPClient() *http.Client {
 func GitHubProviderOverrides() map[string]string {
 	return map[string]string{
 		"code_host.get_recent_changes": GitHubProvider,
+		"code_host.get_file":           GitHubProvider,
 		"code_host.create_draft_pr":    GitHubProvider,
 		"ci.get_checks":                GitHubProvider,
 		"ci.get_logs":                  GitHubProvider,

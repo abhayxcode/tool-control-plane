@@ -48,6 +48,13 @@ func (v StaticRequestValidator) Validate(req ToolCallRequest, definition Capabil
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
 			return fmt.Errorf("github code_host.get_recent_changes requires repository or owner and repo arguments")
 		}
+	case "code_host.get_file":
+		if !hasStringArg(req.Arguments, "path") {
+			return fmt.Errorf("code_host.get_file requires path argument")
+		}
+		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
+			return fmt.Errorf("github code_host.get_file requires repository or owner and repo arguments")
+		}
 	case "deploy.rollback":
 		if !hasStringArg(req.Arguments, "target_revision") {
 			return fmt.Errorf("deploy.rollback requires target_revision argument")

@@ -54,6 +54,7 @@ GitHub adapter:
 - set `GITHUB_TOKEN` before using the GitHub adapter
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
 - `code_host.get_recent_changes` is implemented against recent merged GitHub pull requests
+- `code_host.get_file` is implemented against the GitHub Contents API and returns decoded text content for patch planning
 - `code_host.create_draft_pr` is implemented against GitHub pull request creation; when `files` are provided it creates the head branch from the base branch and upserts file contents before opening the PR
 - `ci.get_checks` is implemented against GitHub REST check runs
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
@@ -64,6 +65,13 @@ GitHub adapter:
 - or `owner` and `repo`
 - optional `branch`
 - optional `limit`, capped at 20
+
+`code_host.get_file` accepts:
+
+- `repository`: `owner/repo`
+- or `owner` and `repo`
+- `path`: relative repository file path
+- optional `ref`, `branch`, or `base`, defaulting to the provider default branch
 
 `code_host.create_draft_pr` accepts:
 

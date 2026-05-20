@@ -74,6 +74,12 @@ func defaultMockFixtures() map[string]map[string]any {
 			"evidence":   "Recent PR #456 reduced database pool size from 50 to 5.",
 			"source_url": "https://github.com/acme/backend/pull/456",
 		},
+		"code_host.get_file": {
+			"path":       "config/database.yaml",
+			"content":    "max_open_connections: 5\n",
+			"source_url": "https://github.com/acme/backend/blob/main/config/database.yaml",
+			"evidence":   "Read config/database.yaml from mock repository fixture.",
+		},
 		"runtime.get_workload_status": {
 			"pods_ready":             "5/8",
 			"restart_count_last_30m": 12,

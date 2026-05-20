@@ -99,6 +99,14 @@ func DefaultCapabilityRegistry() CapabilityRegistry {
 			Description: "Read recent code changes for a service.",
 		},
 		{
+			ID:          "code_host.get_file",
+			Capability:  "code_host",
+			Action:      "get_file",
+			RiskLevel:   RiskRead,
+			Provider:    "mock",
+			Description: "Read a repository file for patch planning and sandbox input hydration.",
+		},
+		{
 			ID:          "deploy.get_recent_deploys",
 			Capability:  "deploy",
 			Action:      "get_recent_deploys",

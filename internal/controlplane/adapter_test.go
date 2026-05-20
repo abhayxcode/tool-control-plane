@@ -180,6 +180,59 @@ func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapterGetsFile(t *testing.T) {
+	var sawRef bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/repos/acme/backend/contents/config/database.yaml" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("ref") != "main" {
+			t.Fatalf("unexpected ref: %q", r.URL.Query().Get("ref"))
+		}
+		sawRef = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"sha": "file-sha",
+			"content": "bWF4X29wZW5fY29ubmVjdGlvbnM6IDUK",
+			"encoding": "base64",
+			"html_url": "https://github.com/acme/backend/blob/main/config/database.yaml"
+		}`))
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "code_host.get_file",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"path":       "config/database.yaml",
+			"ref":        "main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected file result, got error: %v", err)
+	}
+	if !sawRef {
+		t.Fatalf("expected ref query")
+	}
+	if result["content"] != "max_open_connections: 5\n" {
+		t.Fatalf("unexpected content: %#v", result["content"])
+	}
+	if result["path"] != "config/database.yaml" {
+		t.Fatalf("unexpected path: %#v", result["path"])
+	}
+	if result["source_url"] != "https://github.com/acme/backend/blob/main/config/database.yaml" {
+		t.Fatalf("unexpected source URL: %#v", result["source_url"])
+	}
+}
+
 func TestGitHubAdapterCreatesBranchFilesAndDraftPR(t *testing.T) {
 	var createdBranch bool
 	var wroteFile bool
@@ -575,6 +628,7 @@ func TestGitHubProviderOverridesCodeAndCICapabilities(t *testing.T) {
 	registry := DefaultCapabilityRegistry().WithProviderOverrides(GitHubProviderOverrides())
 	for _, id := range []string{
 		"code_host.get_recent_changes",
+		"code_host.get_file",
 		"code_host.create_draft_pr",
 		"ci.get_checks",
 		"ci.get_logs",
