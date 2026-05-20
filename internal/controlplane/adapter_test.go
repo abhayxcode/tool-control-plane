@@ -679,6 +679,70 @@ func TestGitHubAdapterGetsLogsFromJobID(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapterGetsRecentDeploysFromWorkflowRuns(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/repos/acme/backend/actions/workflows/deploy-backend.yml/runs" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("branch") != "main" {
+			t.Fatalf("expected branch query, got %q", r.URL.Query().Get("branch"))
+		}
+		if r.URL.Query().Get("head_sha") != "merge-sha-999" {
+			t.Fatalf("expected head_sha query, got %q", r.URL.Query().Get("head_sha"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"total_count": 1,
+			"workflow_runs": [{
+				"id": 1001,
+				"name": "Deploy backend",
+				"status": "completed",
+				"conclusion": "success",
+				"html_url": "https://github.com/acme/backend/actions/runs/1001",
+				"head_sha": "merge-sha-999",
+				"head_branch": "main",
+				"event": "push",
+				"created_at": "2026-07-13T07:01:00Z",
+				"updated_at": "2026-07-13T07:04:00Z",
+				"run_started_at": "2026-07-13T07:01:30Z",
+				"workflow_id": 42
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "deploy.get_recent_deploys",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"workflow":   "deploy-backend.yml",
+			"branch":     "main",
+			"commit_sha": "merge-sha-999",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected deploy result, got error: %v", err)
+	}
+	if result["status"] != "succeeded" {
+		t.Fatalf("expected succeeded deploy status, got %#v", result["status"])
+	}
+	deploys, ok := result["deploys"].([]map[string]any)
+	if !ok || len(deploys) != 1 {
+		t.Fatalf("expected one deploy, got %#v", result["deploys"])
+	}
+	if deploys[0]["commit_sha"] != "merge-sha-999" || deploys[0]["branch"] != "main" {
+		t.Fatalf("unexpected deploy metadata: %#v", deploys[0])
+	}
+}
+
 func TestGitHubProviderOverridesCodeAndCICapabilities(t *testing.T) {
 	registry := DefaultCapabilityRegistry().WithProviderOverrides(GitHubProviderOverrides())
 	for _, id := range []string{
@@ -704,5 +768,23 @@ func TestGitHubProviderOverridesCodeAndCICapabilities(t *testing.T) {
 	}
 	if definition.Provider != "mock" {
 		t.Fatalf("expected metrics provider to remain mock, got %q", definition.Provider)
+	}
+}
+
+func TestGitHubDeployProviderOverridesDeploymentCapability(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(GitHubDeployProviderOverrides())
+	deploy, ok := registry.byID["deploy.get_recent_deploys"]
+	if !ok {
+		t.Fatalf("expected deploy capability")
+	}
+	if deploy.Provider != GitHubProvider {
+		t.Fatalf("expected github deploy provider, got %q", deploy.Provider)
+	}
+	codeHost, ok := registry.byID["code_host.create_draft_pr"]
+	if !ok {
+		t.Fatalf("expected code host capability")
+	}
+	if codeHost.Provider != "mock" {
+		t.Fatalf("expected code host provider to remain mock, got %q", codeHost.Provider)
 	}
 }

@@ -19,6 +19,7 @@ type Config struct {
 	Store              string
 	SQLitePath         string
 	CodeProvider       string
+	DeployProvider     string
 	GitHubToken        string
 	GitHubBaseURL      string
 }
@@ -31,6 +32,7 @@ func configFromEnv() (Config, error) {
 		Store:           os.Getenv("TOOL_CONTROL_PLANE_STORE"),
 		SQLitePath:      os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
 		CodeProvider:    os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
+		DeployProvider:  os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
 		GitHubToken:     os.Getenv("GITHUB_TOKEN"),
 		GitHubBaseURL:   os.Getenv("GITHUB_API_BASE_URL"),
 	}
@@ -57,8 +59,19 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 	registry := controlplane.DefaultCapabilityRegistry()
 	adapters := controlplane.DefaultAdapterRegistry()
 	store := controlplane.Store(controlplane.NewMemoryStore())
-	if config.CodeProvider == controlplane.GitHubProvider {
-		registry = registry.WithProviderOverrides(controlplane.GitHubProviderOverrides())
+	if config.CodeProvider == controlplane.GitHubProvider || config.DeployProvider == controlplane.GitHubProvider {
+		overrides := map[string]string{}
+		if config.CodeProvider == controlplane.GitHubProvider {
+			for id, provider := range controlplane.GitHubProviderOverrides() {
+				overrides[id] = provider
+			}
+		}
+		if config.DeployProvider == controlplane.GitHubProvider {
+			for id, provider := range controlplane.GitHubDeployProviderOverrides() {
+				overrides[id] = provider
+			}
+		}
+		registry = registry.WithProviderOverrides(overrides)
 		adapters = controlplane.DefaultAdapterRegistryWithGitHub(controlplane.GitHubAdapterConfig{
 			Token:   config.GitHubToken,
 			BaseURL: config.GitHubBaseURL,

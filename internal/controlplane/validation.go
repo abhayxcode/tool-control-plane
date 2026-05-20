@@ -66,6 +66,10 @@ func (v StaticRequestValidator) Validate(req ToolCallRequest, definition Capabil
 		if !hasStringArg(req.Arguments, "target_revision") {
 			return fmt.Errorf("deploy.rollback requires target_revision argument")
 		}
+	case "deploy.get_recent_deploys":
+		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
+			return fmt.Errorf("github deploy.get_recent_deploys requires repository or owner and repo arguments")
+		}
 	case "ci.get_checks":
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "ref", "commit_sha", "sha", "head_sha", "pr_number") {
 			return fmt.Errorf("github ci.get_checks requires ref, commit_sha, sha, head_sha, or pr_number argument")

@@ -51,6 +51,7 @@ GitHub adapter:
 
 - default behavior keeps all capabilities on `mock`
 - set `TOOL_CONTROL_PLANE_CODE_PROVIDER=github` to route `code_host.*` and `ci.*` capabilities to the GitHub adapter
+- set `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER=github` to route `deploy.get_recent_deploys` to the GitHub adapter
 - set `GITHUB_TOKEN` before using the GitHub adapter
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
 - `code_host.get_recent_changes` is implemented against recent merged GitHub pull requests
@@ -59,6 +60,7 @@ GitHub adapter:
 - `code_host.create_draft_pr` is implemented against GitHub pull request creation; when `files` are provided it creates the head branch from the base branch and upserts file contents before opening the PR
 - `ci.get_checks` is implemented against GitHub REST check runs
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
+- `deploy.get_recent_deploys` is implemented against GitHub Actions workflow runs
 
 `code_host.get_recent_changes` accepts:
 
@@ -118,6 +120,17 @@ It also needs one target:
 The response includes `summary`, `log_excerpt`, `truncated`, `source_url`, and `evidence`.
 Log excerpts are bounded to keep agent traces small.
 
+`deploy.get_recent_deploys` accepts:
+
+- `repository`: `owner/repo`
+- or `owner` and `repo`
+- optional `workflow` or `workflow_id`, such as `deploy-backend.yml`
+- optional `branch`
+- optional `commit_sha`, `sha`, or `head_sha`
+- optional `limit`, capped at 20
+
+The GitHub response includes normalized deployment `status`, workflow run `deploys`, `source_url`, and evidence.
+
 Planned stack:
 
 - Go service
@@ -142,6 +155,7 @@ Configuration:
 - `TOOL_CONTROL_PLANE_STORE`
 - `TOOL_CONTROL_PLANE_SQLITE_PATH`
 - `TOOL_CONTROL_PLANE_CODE_PROVIDER`
+- `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER`
 - `GITHUB_TOKEN`
 - `GITHUB_API_BASE_URL`
 

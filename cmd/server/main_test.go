@@ -124,6 +124,32 @@ func TestNewServiceFromEnvCanRouteCodeCapabilitiesToGitHub(t *testing.T) {
 	}
 }
 
+func TestNewServiceFromEnvCanRouteDeployCapabilitiesToGitHub(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		DeployProvider: controlplane.GitHubProvider,
+		GitHubToken:    "test-token",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	var foundGitHubDeploy bool
+	var foundMockCodeHost bool
+	for _, detail := range svc.CapabilityDetails() {
+		if detail.ID == "deploy.get_recent_deploys" && detail.Provider == controlplane.GitHubProvider {
+			foundGitHubDeploy = true
+		}
+		if detail.ID == "code_host.create_draft_pr" && detail.Provider == "mock" {
+			foundMockCodeHost = true
+		}
+	}
+	if !foundGitHubDeploy {
+		t.Fatalf("expected deploy.get_recent_deploys to use github provider")
+	}
+	if !foundMockCodeHost {
+		t.Fatalf("expected code_host.create_draft_pr to remain mock provider")
+	}
+}
+
 func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_ADDR", ":4200")
 	t.Setenv("TOOL_CONTROL_PLANE_API_TOKEN", "secret-token")
@@ -132,6 +158,7 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_STORE", "sqlite")
 	t.Setenv("TOOL_CONTROL_PLANE_SQLITE_PATH", "/tmp/controlplane.sqlite3")
 	t.Setenv("TOOL_CONTROL_PLANE_CODE_PROVIDER", "github")
+	t.Setenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER", "github")
 	t.Setenv("GITHUB_TOKEN", "github-token")
 	t.Setenv("GITHUB_API_BASE_URL", "https://github.example/api/v3")
 
@@ -154,7 +181,7 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
 		t.Fatalf("unexpected store config")
 	}
-	if config.CodeProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" {
+	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" {
 		t.Fatalf("unexpected GitHub config")
 	}
 }

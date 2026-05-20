@@ -208,6 +208,34 @@ func TestCallToolRejectsInvalidGitHubDraftPRRequestBeforeAdapter(t *testing.T) {
 	}
 }
 
+func TestCallToolRejectsInvalidGitHubDeployRequestBeforeAdapter(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(GitHubDeployProviderOverrides())
+	svc := NewServiceWithOptions(ServiceOptions{
+		Registry: registry,
+		Adapters: DefaultAdapterRegistryWithGitHub(GitHubAdapterConfig{
+			Token: "test-token",
+		}),
+	})
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "deploy",
+		Action:      "get_recent_deploys",
+		Arguments: map[string]any{
+			"workflow": "deploy-backend.yml",
+		},
+	})
+	if result.Status != DecisionInvalid {
+		t.Fatalf("expected invalid, got %q", result.Status)
+	}
+	if result.Reason != "github deploy.get_recent_deploys requires repository or owner and repo arguments" {
+		t.Fatalf("unexpected validation reason: %q", result.Reason)
+	}
+}
+
 func TestCallToolValidatesDraftPRFilesPayload(t *testing.T) {
 	svc := NewService()
 	valid := svc.CallTool(ToolCallRequest{

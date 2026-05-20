@@ -66,6 +66,8 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 		return a.getPullRequest(req)
 	case "code_host.create_draft_pr":
 		return a.createDraftPR(req)
+	case "deploy.get_recent_deploys":
+		return a.getRecentDeploys(req)
 	default:
 		return nil, fmt.Errorf("github adapter does not support capability '%s'", definition.ID)
 	}
@@ -297,6 +299,80 @@ func (a GitHubAdapter) getRecentChanges(req ToolCallRequest) (map[string]any, er
 	return map[string]any{
 		"changes":    changes,
 		"evidence":   fmt.Sprintf("GitHub returned %d merged pull request change(s) for %s/%s.", len(changes), owner, repo),
+		"source_url": sourceURL,
+	}, nil
+}
+
+func (a GitHubAdapter) getRecentDeploys(req ToolCallRequest) (map[string]any, error) {
+	owner, repo, err := githubRepoArgs("deploy.get_recent_deploys", req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	branch := firstStringArg(req.Arguments, "branch", "ref", "base")
+	commitSHA := firstStringArg(req.Arguments, "commit_sha", "sha", "head_sha")
+	workflow := firstStringArg(req.Arguments, "workflow", "workflow_id")
+	limit := optionalIntArg(req.Arguments, "limit", 5)
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	query := url.Values{}
+	query.Set("per_page", strconv.Itoa(limit))
+	if branch != "" {
+		query.Set("branch", branch)
+	}
+	if commitSHA != "" {
+		query.Set("head_sha", commitSHA)
+	}
+
+	basePath := fmt.Sprintf("/repos/%s/%s/actions/runs", url.PathEscape(owner), url.PathEscape(repo))
+	if workflow != "" {
+		basePath = fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/runs", url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(workflow))
+	}
+	path := basePath + "?" + query.Encode()
+
+	var response githubWorkflowRunsResponse
+	if err := a.getJSON(path, &response); err != nil {
+		return nil, err
+	}
+
+	deploys := make([]map[string]any, 0, len(response.WorkflowRuns))
+	sourceURL := ""
+	for _, run := range response.WorkflowRuns {
+		status := normalizeGitHubWorkflowRunStatus(run.Status, run.Conclusion)
+		item := map[string]any{
+			"id":          run.ID,
+			"workflow":    firstNonEmpty(run.Name, workflow),
+			"status":      status,
+			"conclusion":  run.Conclusion,
+			"branch":      run.HeadBranch,
+			"commit_sha":  run.HeadSHA,
+			"event":       run.Event,
+			"started_at":  firstNonEmpty(run.RunStartedAt, run.CreatedAt),
+			"updated_at":  run.UpdatedAt,
+			"url":         run.HTMLURL,
+			"source_url":  run.HTMLURL,
+			"workflow_id": run.WorkflowID,
+		}
+		deploys = append(deploys, item)
+		if sourceURL == "" {
+			sourceURL = run.HTMLURL
+		}
+	}
+
+	status := inferGitHubDeploymentStatus(deploys)
+	target := firstNonEmpty(commitSHA, branch, "latest")
+	evidence := fmt.Sprintf("GitHub returned %d workflow run(s) for %s/%s target %s.", len(deploys), owner, repo, target)
+	return map[string]any{
+		"status":     status,
+		"deploys":    deploys,
+		"workflow":   workflow,
+		"branch":     branch,
+		"commit_sha": commitSHA,
+		"evidence":   evidence,
 		"source_url": sourceURL,
 	}, nil
 }
@@ -728,6 +804,15 @@ func optionalBoolArg(args map[string]any, key string, fallback bool) bool {
 	return typed
 }
 
+func firstStringArg(args map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := stringArg(args, key); ok {
+			return value
+		}
+	}
+	return ""
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -760,6 +845,47 @@ func combineGitHubCheckStatus(current string, checkStatus string, conclusion str
 	return "passed"
 }
 
+func normalizeGitHubWorkflowRunStatus(status string, conclusion string) string {
+	switch conclusion {
+	case "failure", "cancelled", "timed_out", "action_required", "startup_failure":
+		return "failed"
+	case "success", "neutral", "skipped":
+		return "succeeded"
+	}
+	if status == "completed" {
+		return "failed"
+	}
+	if status == "queued" || status == "in_progress" || status == "requested" || status == "waiting" || status == "pending" {
+		return "running"
+	}
+	if status != "" {
+		return status
+	}
+	return "unknown"
+}
+
+func inferGitHubDeploymentStatus(deploys []map[string]any) string {
+	if len(deploys) == 0 {
+		return "not_started"
+	}
+	for _, deploy := range deploys {
+		if deploy["status"] == "failed" {
+			return "failed"
+		}
+	}
+	for _, deploy := range deploys {
+		if deploy["status"] == "running" {
+			return "running"
+		}
+	}
+	for _, deploy := range deploys {
+		if deploy["status"] == "succeeded" {
+			return "succeeded"
+		}
+	}
+	return "unknown"
+}
+
 func boundedText(value string, limit int) (string, bool) {
 	if len(value) <= limit {
 		return value, false
@@ -783,6 +909,24 @@ type githubCheckRunsResponse struct {
 		Conclusion string `json:"conclusion"`
 		HTMLURL    string `json:"html_url"`
 	} `json:"check_runs"`
+}
+
+type githubWorkflowRunsResponse struct {
+	TotalCount   int `json:"total_count"`
+	WorkflowRuns []struct {
+		ID           int64  `json:"id"`
+		Name         string `json:"name"`
+		Status       string `json:"status"`
+		Conclusion   string `json:"conclusion"`
+		HTMLURL      string `json:"html_url"`
+		HeadSHA      string `json:"head_sha"`
+		HeadBranch   string `json:"head_branch"`
+		Event        string `json:"event"`
+		CreatedAt    string `json:"created_at"`
+		UpdatedAt    string `json:"updated_at"`
+		RunStartedAt string `json:"run_started_at"`
+		WorkflowID   int64  `json:"workflow_id"`
+	} `json:"workflow_runs"`
 }
 
 type githubPullResponse struct {
@@ -861,5 +1005,11 @@ func GitHubProviderOverrides() map[string]string {
 		"code_host.create_draft_pr":    GitHubProvider,
 		"ci.get_checks":                GitHubProvider,
 		"ci.get_logs":                  GitHubProvider,
+	}
+}
+
+func GitHubDeployProviderOverrides() map[string]string {
+	return map[string]string{
+		"deploy.get_recent_deploys": GitHubProvider,
 	}
 }
