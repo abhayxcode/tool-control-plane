@@ -66,11 +66,90 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 		return a.getPullRequest(req)
 	case "code_host.create_draft_pr":
 		return a.createDraftPR(req)
+	case "code_host.update_pull_request":
+		return a.updatePullRequest(req)
 	case "deploy.get_recent_deploys":
 		return a.getRecentDeploys(req)
 	default:
 		return nil, fmt.Errorf("github adapter does not support capability '%s'", definition.ID)
 	}
+}
+
+func (a GitHubAdapter) updatePullRequest(req ToolCallRequest) (map[string]any, error) {
+	owner, repo, err := githubRepoArgs("code_host.update_pull_request", req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	prNumber, err := intArgAny(req.Arguments, "pr_number", "number")
+	if err != nil {
+		return nil, fmt.Errorf("github code_host.update_pull_request requires pr_number or number argument")
+	}
+
+	var pull githubPullDetailResponse
+	pullPath := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), prNumber)
+	if err := a.getJSON(pullPath, &pull); err != nil {
+		return nil, err
+	}
+	branch := firstNonEmpty(pull.Head.Ref, firstStringArg(req.Arguments, "head", "head_branch", "branch"))
+	if branch == "" {
+		return nil, fmt.Errorf("github pull request #%d did not include head branch", prNumber)
+	}
+	base := firstNonEmpty(pull.Base.Ref, firstStringArg(req.Arguments, "base", "base_branch"))
+	commitMessage := firstStringArg(req.Arguments, "commit_message")
+	if commitMessage == "" {
+		commitMessage = fmt.Sprintf("Update pull request #%d", prNumber)
+	}
+	files, hasFiles, err := githubFileChangesArg(req.Arguments)
+	if err != nil {
+		return nil, fmt.Errorf("%s", strings.ReplaceAll(err.Error(), "code_host.create_draft_pr", "code_host.update_pull_request"))
+	}
+	if hasFiles {
+		if err := a.upsertGitHubFiles(owner, repo, branch, commitMessage, files); err != nil {
+			return nil, err
+		}
+	}
+
+	commentURL := ""
+	if body, ok := stringArg(req.Arguments, "comment"); ok {
+		var comment githubIssueCommentResponse
+		commentPath := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", url.PathEscape(owner), url.PathEscape(repo), prNumber)
+		if err := a.postJSON(commentPath, map[string]any{"body": body}, &comment); err != nil {
+			return nil, err
+		}
+		commentURL = comment.HTMLURL
+	}
+
+	// Re-read PR after file updates so callers get fresh head SHA when GitHub returns it.
+	var refreshed githubPullDetailResponse
+	if err := a.getJSON(pullPath, &refreshed); err == nil {
+		pull = refreshed
+		if pull.Head.Ref != "" {
+			branch = pull.Head.Ref
+		}
+		if pull.Base.Ref != "" {
+			base = pull.Base.Ref
+		}
+	}
+
+	return map[string]any{
+		"pr_number":   prNumber,
+		"repository":  fmt.Sprintf("%s/%s", owner, repo),
+		"owner":       owner,
+		"repo":        repo,
+		"state":       pull.State,
+		"merged":      pull.Merged,
+		"merged_at":   pull.MergedAt,
+		"branch":      branch,
+		"head":        branch,
+		"base":        base,
+		"head_sha":    pull.Head.SHA,
+		"title":       pull.Title,
+		"url":         pull.HTMLURL,
+		"source_url":  pull.HTMLURL,
+		"draft":       pull.Draft,
+		"comment_url": commentURL,
+		"evidence":    fmt.Sprintf("GitHub PR #%d updated for %s/%s on branch %s.", prNumber, owner, repo, branch),
+	}, nil
 }
 
 func (a GitHubAdapter) createDraftPR(req ToolCallRequest) (map[string]any, error) {
@@ -847,6 +926,16 @@ func intArg(args map[string]any, key string) (int, error) {
 	}
 }
 
+func intArgAny(args map[string]any, keys ...string) (int, error) {
+	for _, key := range keys {
+		if _, ok := args[key]; !ok {
+			continue
+		}
+		return intArg(args, key)
+	}
+	return 0, fmt.Errorf("missing %s argument", strings.Join(keys, " or "))
+}
+
 func optionalIntArg(args map[string]any, key string, fallback int) int {
 	value, err := intArg(args, key)
 	if err != nil {
@@ -1054,6 +1143,10 @@ type githubCreatePullResponse struct {
 	} `json:"head"`
 }
 
+type githubIssueCommentResponse struct {
+	HTMLURL string `json:"html_url"`
+}
+
 type githubPullDetailResponse struct {
 	Number         int    `json:"number"`
 	Title          string `json:"title"`
@@ -1082,12 +1175,13 @@ func (a GitHubAdapter) HTTPClient() *http.Client {
 
 func GitHubProviderOverrides() map[string]string {
 	return map[string]string{
-		"code_host.get_recent_changes": GitHubProvider,
-		"code_host.get_file":           GitHubProvider,
-		"code_host.get_pull_request":   GitHubProvider,
-		"code_host.create_draft_pr":    GitHubProvider,
-		"ci.get_checks":                GitHubProvider,
-		"ci.get_logs":                  GitHubProvider,
+		"code_host.get_recent_changes":  GitHubProvider,
+		"code_host.get_file":            GitHubProvider,
+		"code_host.get_pull_request":    GitHubProvider,
+		"code_host.create_draft_pr":     GitHubProvider,
+		"code_host.update_pull_request": GitHubProvider,
+		"ci.get_checks":                 GitHubProvider,
+		"ci.get_logs":                   GitHubProvider,
 	}
 }
 

@@ -91,6 +91,14 @@ func DefaultCapabilityRegistry() CapabilityRegistry {
 			Description: "Create a draft pull request for human review.",
 		},
 		{
+			ID:          "code_host.update_pull_request",
+			Capability:  "code_host",
+			Action:      "update_pull_request",
+			RiskLevel:   RiskWriteLow,
+			Provider:    "mock",
+			Description: "Update an existing pull request branch and optionally add a comment.",
+		},
+		{
 			ID:          "code_host.get_recent_changes",
 			Capability:  "code_host",
 			Action:      "get_recent_changes",

@@ -58,6 +58,7 @@ GitHub adapter:
 - `code_host.get_file` is implemented against the GitHub Contents API and returns decoded text content for patch planning
 - `code_host.get_pull_request` is implemented against GitHub pull request details and returns merge state plus head/base metadata
 - `code_host.create_draft_pr` is implemented against GitHub pull request creation; when `files` are provided it creates the head branch from the base branch and upserts file contents before opening the PR
+- `code_host.update_pull_request` is implemented against an existing GitHub pull request; when `files` are provided it writes to the PR head branch and can add a PR comment
 - `ci.get_checks` is implemented against GitHub REST check runs
 - `ci.get_checks` also attempts to discover the failed GitHub Actions job and includes `job_id`/`logs_url` when available
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
@@ -116,6 +117,18 @@ It returns PR metadata including `state`, `merged`, `merged_at`, `merge_commit_s
 - optional `file_path` plus `file_content` for a single file
 
 It returns PR metadata including `pr_number`, `repository`, `branch`, `base`, `head_sha`, `url`, and `source_url` when GitHub includes those values.
+
+`code_host.update_pull_request` accepts:
+
+- `repository`: `owner/repo`
+- or `owner` and `repo`
+- `pr_number` or `number`
+- optional `commit_message`, used when writing files
+- optional `comment`, posted as a pull request comment
+- optional `files` as `{ "path/to/file": "content" }` or `[{ "path": "path/to/file", "content": "content" }]`
+- optional `file_path` plus `file_content` for a single file
+
+It returns updated PR metadata including `pr_number`, `repository`, `branch`, `base`, `head_sha`, `url`, `source_url`, and `comment_url` when available.
 
 `ci.get_checks` accepts either:
 
@@ -212,7 +225,7 @@ Tool call decisions:
 - `denied`: action is unknown or blocked by policy.
 - `invalid`: action is registered, but the request is missing required metadata or arguments.
 
-Validation currently checks common request metadata plus capability-specific arguments for draft PR creation, rollback approvals, and GitHub CI reads.
+Validation currently checks common request metadata plus capability-specific arguments for draft PR creation, PR updates, rollback approvals, and GitHub CI reads.
 
 When a tool call returns `approval_required`, the response includes `approval_request_id`.
 Granted approvals can be executed once with `POST /v1/approvals/{id}/execute`.

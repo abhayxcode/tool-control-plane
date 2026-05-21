@@ -113,6 +113,14 @@ func defaultMockFixtures() map[string]map[string]any {
 			"url":       "https://github.com/acme/backend/pull/999",
 			"evidence":  "Draft PR #999 created from validated patch artifact.",
 		},
+		"code_host.update_pull_request": {
+			"pr_number":   999,
+			"branch":      "majdoor/revert-db-pool-config",
+			"title":       "Draft: Revert backend database pool config",
+			"url":         "https://github.com/acme/backend/pull/999",
+			"comment_url": "https://github.com/acme/backend/pull/999#issuecomment-1",
+			"evidence":    "Draft PR #999 updated from follow-up patch artifact.",
+		},
 		"ci.get_checks": {
 			"status":     "passed",
 			"workflow":   "backend-ci.yml",

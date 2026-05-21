@@ -44,6 +44,16 @@ func (v StaticRequestValidator) Validate(req ToolCallRequest, definition Capabil
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "head", "head_branch", "branch") {
 			return fmt.Errorf("github code_host.create_draft_pr requires head, head_branch, or branch argument")
 		}
+	case "code_host.update_pull_request":
+		if !hasAnyArg(req.Arguments, "pr_number", "number") {
+			return fmt.Errorf("code_host.update_pull_request requires pr_number or number argument")
+		}
+		if err := validateDraftPRFileArgs(req.Arguments); err != nil {
+			return fmt.Errorf("%s", strings.ReplaceAll(err.Error(), "code_host.create_draft_pr", "code_host.update_pull_request"))
+		}
+		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
+			return fmt.Errorf("github code_host.update_pull_request requires repository or owner and repo arguments")
+		}
 	case "code_host.get_recent_changes":
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
 			return fmt.Errorf("github code_host.get_recent_changes requires repository or owner and repo arguments")

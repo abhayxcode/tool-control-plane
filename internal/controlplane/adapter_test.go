@@ -180,6 +180,112 @@ func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapterUpdatesPullRequest(t *testing.T) {
+	var sawFileUpdate bool
+	var sawComment bool
+	pullReads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/backend/pulls/999":
+			pullReads++
+			w.Write([]byte(`{
+				"number": 999,
+				"title": "Draft: Revert backend database pool config",
+				"state": "open",
+				"html_url": "https://github.com/acme/backend/pull/999",
+				"draft": true,
+				"merged": false,
+				"head": {"ref": "majdoor/revert-db-pool-config", "sha": "head-sha-999"},
+				"base": {"ref": "main"}
+			}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/backend/contents/.github/workflows/ci.yml":
+			if r.URL.Query().Get("ref") != "majdoor/revert-db-pool-config" {
+				t.Fatalf("unexpected file ref: %s", r.URL.RawQuery)
+			}
+			w.Write([]byte(`{"sha":"file-sha-1","content":"","encoding":"base64"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/backend/contents/.github/workflows/ci.yml":
+			sawFileUpdate = true
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode payload: %v", err)
+			}
+			if payload["message"] != "Align CI Node.js version" {
+				t.Fatalf("unexpected commit message: %#v", payload["message"])
+			}
+			if payload["branch"] != "majdoor/revert-db-pool-config" {
+				t.Fatalf("unexpected branch: %#v", payload["branch"])
+			}
+			if payload["sha"] != "file-sha-1" {
+				t.Fatalf("expected existing file sha")
+			}
+			content, err := base64.StdEncoding.DecodeString(payload["content"].(string))
+			if err != nil {
+				t.Fatalf("decode content: %v", err)
+			}
+			if string(content) != "node-version: 20\n" {
+				t.Fatalf("unexpected content: %q", string(content))
+			}
+			w.Write([]byte(`{"content":{"sha":"file-sha-2"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/backend/issues/999/comments":
+			sawComment = true
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode payload: %v", err)
+			}
+			if payload["body"] != "Majdoor follow-up fix" {
+				t.Fatalf("unexpected comment: %#v", payload["body"])
+			}
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"html_url":"https://github.com/acme/backend/pull/999#issuecomment-1"}`))
+		default:
+			t.Fatalf("unexpected GitHub request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "code_host.update_pull_request",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository":     "acme/backend",
+			"pr_number":      999,
+			"commit_message": "Align CI Node.js version",
+			"comment":        "Majdoor follow-up fix",
+			"files": map[string]any{
+				".github/workflows/ci.yml": "node-version: 20\n",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected PR update result, got error: %v", err)
+	}
+	if pullReads != 2 {
+		t.Fatalf("expected initial and refreshed PR reads, got %d", pullReads)
+	}
+	if !sawFileUpdate {
+		t.Fatalf("expected file update")
+	}
+	if !sawComment {
+		t.Fatalf("expected PR comment")
+	}
+	if result["pr_number"] != 999 {
+		t.Fatalf("expected PR number, got %#v", result["pr_number"])
+	}
+	if result["comment_url"] != "https://github.com/acme/backend/pull/999#issuecomment-1" {
+		t.Fatalf("expected comment URL, got %#v", result["comment_url"])
+	}
+	if result["branch"] != "majdoor/revert-db-pool-config" {
+		t.Fatalf("expected PR branch, got %#v", result["branch"])
+	}
+}
+
 func TestGitHubAdapterGetsFile(t *testing.T) {
 	var sawRef bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -789,6 +895,7 @@ func TestGitHubProviderOverridesCodeAndCICapabilities(t *testing.T) {
 		"code_host.get_file",
 		"code_host.get_pull_request",
 		"code_host.create_draft_pr",
+		"code_host.update_pull_request",
 		"ci.get_checks",
 		"ci.get_logs",
 	} {
