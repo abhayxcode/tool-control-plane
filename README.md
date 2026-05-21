@@ -63,6 +63,23 @@ GitHub adapter:
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
 - `deploy.get_recent_deploys` is implemented against GitHub Actions workflow runs
 
+Demo provider configs:
+
+- `examples/demo.mock.env` keeps all code, CI, and deployment calls on mock providers.
+- `examples/demo.github.env.example` documents the real GitHub provider variables. Copy it to a private ignored file before adding credentials.
+
+From the workspace root, the local demo runner can load a provider env file:
+
+```bash
+MAJDOOR_DEMO_ENV_FILE=tool-control-plane/examples/demo.mock.env ./scripts/run-local-demo.sh
+```
+
+Real GitHub mode:
+
+```bash
+MAJDOOR_DEMO_ENV_FILE=tool-control-plane/examples/demo.github.env ./scripts/run-local-demo.sh
+```
+
 `code_host.get_recent_changes` accepts:
 
 - `repository`: `owner/repo`

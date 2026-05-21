@@ -1,4 +1,5 @@
 .cache/
 bin/
 .env
+examples/demo.github.env
 .DS_Store
