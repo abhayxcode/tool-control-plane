@@ -139,6 +139,7 @@ func (a GitHubAdapter) updatePullRequest(req ToolCallRequest) (map[string]any, e
 		}
 		commentURL = comment.HTMLURL
 	}
+	routing := a.applyPullRequestRouting(owner, repo, prNumber, req.Arguments)
 
 	// Re-read PR after file updates so callers get fresh head SHA when GitHub returns it.
 	var refreshed githubPullDetailResponse
@@ -169,6 +170,9 @@ func (a GitHubAdapter) updatePullRequest(req ToolCallRequest) (map[string]any, e
 		"source_url":  pull.HTMLURL,
 		"draft":       pull.Draft,
 		"comment_url": commentURL,
+		"routing":     routing,
+		"reviewers":   routing["reviewers"],
+		"labels":      routing["labels"],
 		"evidence":    fmt.Sprintf("GitHub PR #%d updated for %s/%s on branch %s.", prNumber, owner, repo, branch),
 	}, nil
 }
@@ -231,6 +235,7 @@ func (a GitHubAdapter) createDraftPR(req ToolCallRequest) (map[string]any, error
 	if branch == "" {
 		branch = head
 	}
+	routing := a.applyPullRequestRouting(owner, repo, response.Number, req.Arguments)
 	return map[string]any{
 		"pr_number":  response.Number,
 		"repository": fmt.Sprintf("%s/%s", owner, repo),
@@ -244,6 +249,9 @@ func (a GitHubAdapter) createDraftPR(req ToolCallRequest) (map[string]any, error
 		"url":        response.HTMLURL,
 		"source_url": response.HTMLURL,
 		"draft":      response.Draft,
+		"routing":    routing,
+		"reviewers":  routing["reviewers"],
+		"labels":     routing["labels"],
 		"evidence":   fmt.Sprintf("GitHub draft PR #%d created for %s/%s from %s into %s.", response.Number, owner, repo, head, base),
 	}, nil
 }
@@ -717,6 +725,38 @@ func (a GitHubAdapter) pullRequestHeadSHA(owner string, repo string, prNumber in
 	return response.Head.SHA, nil
 }
 
+func (a GitHubAdapter) applyPullRequestRouting(owner string, repo string, prNumber int, args map[string]any) map[string]any {
+	reviewers := stringSliceArg(args, "reviewers")
+	teamReviewers := stringSliceArg(args, "team_reviewers")
+	labels := stringSliceArg(args, "labels")
+	warnings := []string{}
+
+	if len(reviewers) > 0 || len(teamReviewers) > 0 {
+		reviewerPath := fmt.Sprintf("/repos/%s/%s/pulls/%d/requested_reviewers", url.PathEscape(owner), url.PathEscape(repo), prNumber)
+		var response map[string]any
+		if err := a.postJSON(reviewerPath, withoutEmptyMap(map[string]any{
+			"reviewers":      reviewers,
+			"team_reviewers": teamReviewers,
+		}), &response); err != nil {
+			warnings = append(warnings, fmt.Sprintf("request_reviewers: %s", err.Error()))
+		}
+	}
+	if len(labels) > 0 {
+		labelsPath := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", url.PathEscape(owner), url.PathEscape(repo), prNumber)
+		var response map[string]any
+		if err := a.postJSON(labelsPath, map[string]any{"labels": labels}, &response); err != nil {
+			warnings = append(warnings, fmt.Sprintf("add_labels: %s", err.Error()))
+		}
+	}
+
+	return map[string]any{
+		"reviewers":      reviewers,
+		"team_reviewers": teamReviewers,
+		"labels":         labels,
+		"warnings":       warnings,
+	}
+}
+
 func (a GitHubAdapter) getJSON(path string, target any) error {
 	body, _, err := a.get(path, "application/vnd.github+json")
 	if err != nil {
@@ -1028,6 +1068,68 @@ func stringArg(args map[string]any, key string) (string, bool) {
 	}
 	text = strings.TrimSpace(text)
 	return text, text != ""
+}
+
+func stringSliceArg(args map[string]any, key string) []string {
+	value, ok := args[key]
+	if !ok {
+		return nil
+	}
+	values := []string{}
+	switch typed := value.(type) {
+	case []string:
+		for _, item := range typed {
+			if text := strings.TrimSpace(item); text != "" {
+				values = append(values, text)
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+				values = append(values, strings.TrimSpace(text))
+			}
+		}
+	case string:
+		for _, item := range strings.Split(typed, ",") {
+			if text := strings.TrimSpace(item); text != "" {
+				values = append(values, text)
+			}
+		}
+	}
+	return uniqueStrings(values)
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	result := []string{}
+	for _, value := range values {
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
+func withoutEmptyMap(value map[string]any) map[string]any {
+	result := map[string]any{}
+	for key, item := range value {
+		switch typed := item.(type) {
+		case []string:
+			if len(typed) > 0 {
+				result[key] = typed
+			}
+		case string:
+			if strings.TrimSpace(typed) != "" {
+				result[key] = typed
+			}
+		case nil:
+		default:
+			result[key] = item
+		}
+	}
+	return result
 }
 
 func intArg(args map[string]any, key string) (int, error) {

@@ -121,8 +121,11 @@ It returns PR metadata including `state`, `merged`, `merged_at`, `merge_commit_s
 - optional `commit_message`, used when writing files
 - optional `files` as `{ "path/to/file": "content" }` or `[{ "path": "path/to/file", "content": "content" }]`
 - optional `file_path` plus `file_content` for a single file
+- optional `reviewers` as GitHub usernames
+- optional `team_reviewers` as GitHub team slugs
+- optional `labels` as issue label names
 
-It returns PR metadata including `pr_number`, `repository`, `branch`, `base`, `head_sha`, `url`, and `source_url` when GitHub includes those values.
+It returns PR metadata including `pr_number`, `repository`, `branch`, `base`, `head_sha`, `url`, `source_url`, and best-effort reviewer/label routing metadata when GitHub includes those values.
 
 `code_host.update_pull_request` accepts:
 
@@ -133,8 +136,9 @@ It returns PR metadata including `pr_number`, `repository`, `branch`, `base`, `h
 - optional `comment`, posted as a pull request comment
 - optional `files` as `{ "path/to/file": "content" }` or `[{ "path": "path/to/file", "content": "content" }]`
 - optional `file_path` plus `file_content` for a single file
+- optional `reviewers`, `team_reviewers`, and `labels` to refresh PR routing
 
-It returns updated PR metadata including `pr_number`, `repository`, `branch`, `base`, `head_sha`, `url`, `source_url`, and `comment_url` when available.
+It returns updated PR metadata including `pr_number`, `repository`, `branch`, `base`, `head_sha`, `url`, `source_url`, `comment_url`, and best-effort routing metadata when available.
 
 `ci.get_checks` accepts either:
 

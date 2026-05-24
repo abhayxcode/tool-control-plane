@@ -38,6 +38,9 @@ func (v StaticRequestValidator) Validate(req ToolCallRequest, definition Capabil
 		if err := validateDraftPRFileArgs(req.Arguments); err != nil {
 			return err
 		}
+		if err := validateOptionalStringListArgs(req.Arguments, "reviewers", "team_reviewers", "labels"); err != nil {
+			return err
+		}
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
 			return fmt.Errorf("github code_host.create_draft_pr requires repository or owner and repo arguments")
 		}
@@ -50,6 +53,9 @@ func (v StaticRequestValidator) Validate(req ToolCallRequest, definition Capabil
 		}
 		if err := validateDraftPRFileArgs(req.Arguments); err != nil {
 			return fmt.Errorf("%s", strings.ReplaceAll(err.Error(), "code_host.create_draft_pr", "code_host.update_pull_request"))
+		}
+		if err := validateOptionalStringListArgs(req.Arguments, "reviewers", "team_reviewers", "labels"); err != nil {
+			return err
 		}
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
 			return fmt.Errorf("github code_host.update_pull_request requires repository or owner and repo arguments")
@@ -148,6 +154,37 @@ func validateDraftPRFileArgs(args map[string]any) error {
 		}
 	default:
 		return fmt.Errorf("code_host.create_draft_pr files must be an object or array")
+	}
+	return nil
+}
+
+func validateOptionalStringListArgs(args map[string]any, keys ...string) error {
+	for _, key := range keys {
+		value, ok := args[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) == "" {
+				return fmt.Errorf("%s must be a non-empty string or string array", key)
+			}
+		case []any:
+			for _, item := range typed {
+				text, ok := item.(string)
+				if !ok || strings.TrimSpace(text) == "" {
+					return fmt.Errorf("%s entries must be non-empty strings", key)
+				}
+			}
+		case []string:
+			for _, item := range typed {
+				if strings.TrimSpace(item) == "" {
+					return fmt.Errorf("%s entries must be non-empty strings", key)
+				}
+			}
+		default:
+			return fmt.Errorf("%s must be a non-empty string or string array", key)
+		}
 	}
 	return nil
 }

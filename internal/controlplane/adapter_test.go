@@ -215,12 +215,11 @@ func TestGitHubAdapterDoesNotRetryWriteRequests(t *testing.T) {
 
 func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 	var sawAuth bool
+	var sawReviewers bool
+	var sawLabels bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("unexpected method: %s", r.Method)
-		}
-		if r.URL.Path != "/repos/acme/backend/pulls" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Header.Get("Authorization") == "Bearer test-token" {
 			sawAuth = true
@@ -228,6 +227,24 @@ func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode payload: %v", err)
+		}
+		if r.URL.Path == "/repos/acme/backend/pulls/999/requested_reviewers" {
+			sawReviewers = true
+			assertStringSlice(t, payload["reviewers"], []string{"octocat"})
+			assertStringSlice(t, payload["team_reviewers"], []string{"platform"})
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/repos/acme/backend/issues/999/labels" {
+			sawLabels = true
+			assertStringSlice(t, payload["labels"], []string{"majdoor", "backend"})
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path != "/repos/acme/backend/pulls" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		if payload["title"] != "Draft: Revert backend database pool config" {
 			t.Fatalf("unexpected title: %#v", payload["title"])
@@ -266,10 +283,13 @@ func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 		Provider: GitHubProvider,
 	}, ToolCallRequest{
 		Arguments: map[string]any{
-			"repository": "acme/backend",
-			"title":      "Draft: Revert backend database pool config",
-			"branch":     "majdoor/revert-db-pool-config",
-			"body":       "Validated patch artifact attached to agent run.",
+			"repository":     "acme/backend",
+			"title":          "Draft: Revert backend database pool config",
+			"branch":         "majdoor/revert-db-pool-config",
+			"body":           "Validated patch artifact attached to agent run.",
+			"reviewers":      []any{"octocat"},
+			"team_reviewers": []any{"platform"},
+			"labels":         []any{"majdoor", "backend"},
 		},
 	})
 	if err != nil {
@@ -277,6 +297,9 @@ func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 	}
 	if !sawAuth {
 		t.Fatalf("expected authorization header")
+	}
+	if !sawReviewers || !sawLabels {
+		t.Fatalf("expected reviewers and labels routing calls")
 	}
 	if result["pr_number"] != 999 {
 		t.Fatalf("expected PR number, got %#v", result["pr_number"])
@@ -299,6 +322,10 @@ func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 	if result["draft"] != true {
 		t.Fatalf("expected draft flag")
 	}
+	routing := result["routing"].(map[string]any)
+	assertStringSlice(t, routing["reviewers"], []string{"octocat"})
+	assertStringSlice(t, routing["team_reviewers"], []string{"platform"})
+	assertStringSlice(t, routing["labels"], []string{"majdoor", "backend"})
 }
 
 func TestGitHubAdapterUpdatesPullRequest(t *testing.T) {
@@ -1053,5 +1080,32 @@ func TestGitHubDeployProviderOverridesDeploymentCapability(t *testing.T) {
 	}
 	if codeHost.Provider != "mock" {
 		t.Fatalf("expected code host provider to remain mock, got %q", codeHost.Provider)
+	}
+}
+
+func assertStringSlice(t *testing.T, value any, expected []string) {
+	t.Helper()
+	items, ok := value.([]any)
+	if !ok {
+		if typed, ok := value.([]string); ok {
+			if len(typed) != len(expected) {
+				t.Fatalf("expected %#v, got %#v", expected, typed)
+			}
+			for index := range expected {
+				if typed[index] != expected[index] {
+					t.Fatalf("expected %#v, got %#v", expected, typed)
+				}
+			}
+			return
+		}
+		t.Fatalf("expected string slice, got %#v", value)
+	}
+	if len(items) != len(expected) {
+		t.Fatalf("expected %#v, got %#v", expected, items)
+	}
+	for index := range expected {
+		if items[index] != expected[index] {
+			t.Fatalf("expected %#v, got %#v", expected, items)
+		}
 	}
 }
