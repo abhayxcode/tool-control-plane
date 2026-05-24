@@ -14,7 +14,7 @@ Owns:
 
 ## Phase 0 Status
 
-This repo now exposes the first real Tool Control Plane HTTP boundary for Majdoor. It uses mock adapters and an in-memory audit log while preserving the production API shape.
+This repo now exposes the first real Tool Control Plane HTTP boundary for Majdoor. It uses mock adapters and in-memory state by default while preserving the production API shape.
 
 v1 milestone checklist: [`docs/v1-milestone.md`](docs/v1-milestone.md)
 
@@ -40,6 +40,7 @@ Request tracing:
 - callers can supply `X-Request-ID`; otherwise the server generates one
 - access logs are emitted as JSON lines with method, path, status, duration, and request ID
 - tool-call audit entries include `request_id`
+- stored tool-call records include `request_id`, redacted arguments, and redacted results
 
 Rate limiting:
 
@@ -111,7 +112,7 @@ MCP-compatible endpoint:
 - supported methods: `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, and `ping`
 - `tools/list` exposes the same governed capability registry as MCP tool definitions
 - `tools/call` routes through the existing policy, validation, provider adapter, approval, and audit path
-- `resources/list` and `resources/read` expose non-secret capability, provider-config, readiness, and audit resources
+- `resources/list` and `resources/read` expose non-secret capability, provider-config, readiness, audit, tool-call, and audit-export resources
 - when `TOOL_CONTROL_PLANE_API_TOKEN` is set, `/mcp` uses the same bearer-token guard as the REST API
 
 MCP tool calls use the MCP tool name as `capability.action`. Standard metadata fields such as `org_id`, `actor_user_id`, `agent_run_id`, `service_id`, `environment`, and `request_id` are extracted from `arguments`; all remaining fields are passed to the underlying provider as tool arguments. A nested `arguments` or `tool_args` object can also be used for provider-specific arguments.
@@ -336,8 +337,11 @@ Go client package: [`client`](client)
 - `GET /healthz`
 - `POST /mcp`
 - `GET /v1/capabilities` returns stable capability IDs plus risk/provider metadata.
+- `GET /v1/tool-calls`
 - `POST /v1/tool-calls`
+- `GET /v1/tool-calls/{id}`
 - `GET /v1/audit`
+- `GET /v1/audit/export`
 - `GET /v1/approvals`
 - `GET /v1/approvals/{id}`
 - `POST /v1/approvals/{id}/grant`
@@ -362,6 +366,8 @@ Tool call decisions:
 - `invalid`: action is registered, but the request is missing required metadata or arguments.
 
 Validation currently checks common request metadata plus capability-specific arguments for draft PR creation, PR updates, rollback approvals, and GitHub CI reads.
+
+Tool call records are stored separately from compact audit entries. Records include policy decision, provider, status, approval request ID, bounded arguments, bounded results, and provider error metadata. Sensitive fields such as tokens, authorization headers, cookies, raw logs, and file contents are redacted before storage. Raw provider payload retention should stay behind a separate explicit internal-only mode.
 
 When a tool call returns `approval_required`, the response includes `approval_request_id`.
 Granted approvals can be executed once with `POST /v1/approvals/{id}/execute`.

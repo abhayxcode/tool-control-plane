@@ -88,6 +88,32 @@ func TestClientCallsToolAndApprovalLifecycle(t *testing.T) {
 	if len(audit) != 2 {
 		t.Fatalf("expected two audit entries, got %d", len(audit))
 	}
+
+	toolCalls, err := tcp.ToolCalls(ctx)
+	if err != nil {
+		t.Fatalf("tool calls: %v", err)
+	}
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected one tool call record, got %d", len(toolCalls))
+	}
+	if toolCalls[0].Arguments["token"] != "[redacted]" {
+		t.Fatalf("expected redacted token")
+	}
+	toolRecord, err := tcp.ToolCall(ctx, toolCalls[0].ID)
+	if err != nil {
+		t.Fatalf("tool call: %v", err)
+	}
+	if toolRecord.ID != toolCalls[0].ID {
+		t.Fatalf("expected matching tool call record")
+	}
+
+	export, err := tcp.AuditExport(ctx)
+	if err != nil {
+		t.Fatalf("audit export: %v", err)
+	}
+	if export.SchemaVersion == "" || len(export.Audit) != 2 || len(export.ToolCalls) != 1 || len(export.Approvals) != 1 {
+		t.Fatalf("unexpected audit export: %#v", export)
+	}
 }
 
 func TestClientFetchesOpenAPI(t *testing.T) {
@@ -166,6 +192,27 @@ func testMux() *http.ServeMux {
 		Reason:      "Tool action requires approval before execution.",
 		RequestedAt: "2026-07-09T00:00:00Z",
 	}
+	toolCallRecord := ToolCallRecord{
+		ID:          "tool_call_000001",
+		At:          "2026-07-09T00:00:00Z",
+		RequestID:   "req-tool-123",
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "deploy",
+		Action:      "rollback",
+		Arguments: map[string]any{
+			"target_revision": "sha-abc123",
+			"token":           "[redacted]",
+		},
+		RiskLevel:         "write_high",
+		Decision:          "approval_required",
+		Status:            "approval_required",
+		Reason:            "Tool action requires approval before execution.",
+		ApprovalRequestID: approval.ID,
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeTestJSON(w, map[string]string{"status": "ok"})
 	})
@@ -193,6 +240,18 @@ func testMux() *http.ServeMux {
 			ApprovalRequired:  true,
 			ApprovalRequestID: approval.ID,
 		})
+	})
+	mux.HandleFunc("GET /v1/tool-calls", func(w http.ResponseWriter, r *http.Request) {
+		writeTestJSON(w, map[string]any{
+			"tool_calls": []ToolCallRecord{toolCallRecord},
+		})
+	})
+	mux.HandleFunc("GET /v1/tool-calls/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") != toolCallRecord.ID {
+			http.NotFound(w, r)
+			return
+		}
+		writeTestJSON(w, toolCallRecord)
 	})
 	mux.HandleFunc("GET /v1/approvals/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if r.PathValue("id") != approval.ID {
@@ -229,6 +288,18 @@ func testMux() *http.ServeMux {
 				{Decision: "approval_required"},
 				{Decision: "approved_executed"},
 			},
+		})
+	})
+	mux.HandleFunc("GET /v1/audit/export", func(w http.ResponseWriter, r *http.Request) {
+		writeTestJSON(w, AuditExportResponse{
+			SchemaVersion: "2026-07-16.alpha1",
+			ExportedAt:    "2026-07-16T00:00:00Z",
+			Audit: []AuditEntry{
+				{Decision: "approval_required"},
+				{Decision: "approved_executed"},
+			},
+			ToolCalls: []ToolCallRecord{toolCallRecord},
+			Approvals: []ApprovalRequest{approval},
 		})
 	})
 	mux.HandleFunc("GET /openapi.yaml", func(w http.ResponseWriter, r *http.Request) {

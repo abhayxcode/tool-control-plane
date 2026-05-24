@@ -102,6 +102,96 @@ func TestApprovalHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestToolCallRecordHTTPFlow(t *testing.T) {
+	mux := newMux(controlplane.NewService())
+	toolBody := []byte(`{
+		"org_id": "default",
+		"actor_user_id": "local-user",
+		"agent_run_id": "run_123",
+		"service_id": "backend",
+		"environment": "prod",
+		"capability": "metrics",
+		"action": "get_service_health",
+		"arguments": {"target": "backend-prod", "token": "secret"}
+	}`)
+	toolReq := httptest.NewRequest(http.MethodPost, "/v1/tool-calls", bytes.NewReader(toolBody))
+	toolReq.Header.Set("Content-Type", "application/json")
+	toolResp := httptest.NewRecorder()
+	mux.ServeHTTP(toolResp, toolReq)
+	if toolResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", toolResp.Code)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/v1/tool-calls", nil)
+	listResp := httptest.NewRecorder()
+	mux.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", listResp.Code)
+	}
+	var listResult struct {
+		ToolCalls []controlplane.ToolCallRecord `json:"tool_calls"`
+	}
+	if err := json.NewDecoder(listResp.Body).Decode(&listResult); err != nil {
+		t.Fatalf("decode tool call list: %v", err)
+	}
+	if len(listResult.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call record, got %d", len(listResult.ToolCalls))
+	}
+	record := listResult.ToolCalls[0]
+	if record.ID == "" {
+		t.Fatalf("expected tool call record ID")
+	}
+	if record.Arguments["token"] != "[redacted]" {
+		t.Fatalf("expected redacted token in tool call record")
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/tool-calls/"+record.ID, nil)
+	getResp := httptest.NewRecorder()
+	mux.ServeHTTP(getResp, getReq)
+	if getResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", getResp.Code)
+	}
+	var getResult controlplane.ToolCallRecord
+	if err := json.NewDecoder(getResp.Body).Decode(&getResult); err != nil {
+		t.Fatalf("decode tool call record: %v", err)
+	}
+	if getResult.ID != record.ID || getResult.Status != "success" {
+		t.Fatalf("unexpected tool call record: %#v", getResult)
+	}
+
+	missingReq := httptest.NewRequest(http.MethodGet, "/v1/tool-calls/missing", nil)
+	missingResp := httptest.NewRecorder()
+	mux.ServeHTTP(missingResp, missingReq)
+	if missingResp.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing tool call, got %d", missingResp.Code)
+	}
+
+	exportReq := httptest.NewRequest(http.MethodGet, "/v1/audit/export", nil)
+	exportResp := httptest.NewRecorder()
+	mux.ServeHTTP(exportResp, exportReq)
+	if exportResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", exportResp.Code)
+	}
+	var exportResult struct {
+		SchemaVersion string                         `json:"schema_version"`
+		Audit         []controlplane.AuditEntry      `json:"audit"`
+		ToolCalls     []controlplane.ToolCallRecord  `json:"tool_calls"`
+		Approvals     []controlplane.ApprovalRequest `json:"approvals"`
+	}
+	if err := json.NewDecoder(exportResp.Body).Decode(&exportResult); err != nil {
+		t.Fatalf("decode audit export: %v", err)
+	}
+	if exportResult.SchemaVersion == "" {
+		t.Fatalf("expected schema version")
+	}
+	if len(exportResult.Audit) != 1 || len(exportResult.ToolCalls) != 1 {
+		t.Fatalf("expected audit and tool calls in export")
+	}
+	if len(exportResult.Approvals) != 0 {
+		t.Fatalf("expected no approvals for read tool call")
+	}
+}
+
 func TestMCPInitializeAndToolList(t *testing.T) {
 	mux := newMux(controlplane.NewService())
 	initReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)))
@@ -224,13 +314,27 @@ func TestMCPResourcesListAndRead(t *testing.T) {
 		t.Fatalf("decode resources/list response: %v", err)
 	}
 	var foundCapabilities bool
+	var foundToolCalls bool
+	var foundAuditExport bool
 	for _, resource := range listBody.Result.Resources {
 		if resource.URI == "tool-control-plane://capabilities" {
 			foundCapabilities = true
 		}
+		if resource.URI == "tool-control-plane://tool-calls" {
+			foundToolCalls = true
+		}
+		if resource.URI == "tool-control-plane://audit-export" {
+			foundAuditExport = true
+		}
 	}
 	if !foundCapabilities {
 		t.Fatalf("expected capabilities resource")
+	}
+	if !foundToolCalls {
+		t.Fatalf("expected tool calls resource")
+	}
+	if !foundAuditExport {
+		t.Fatalf("expected audit export resource")
 	}
 
 	readReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"tool-control-plane://capabilities"}}`)))

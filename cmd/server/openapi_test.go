@@ -22,7 +22,9 @@ func TestOpenAPISpecDocumentsHTTPRoutes(t *testing.T) {
 		"/v1/capabilities:",
 		"/v1/readiness:",
 		"/v1/tool-calls:",
+		"/v1/tool-calls/{id}:",
 		"/v1/audit:",
+		"/v1/audit/export:",
 		"/v1/approvals:",
 		"/v1/approvals/{id}:",
 		"/v1/approvals/{id}/grant:",
@@ -30,10 +32,12 @@ func TestOpenAPISpecDocumentsHTTPRoutes(t *testing.T) {
 		"/v1/approvals/{id}/execute:",
 		"ToolCallRequest:",
 		"ToolCallResponse:",
+		"ToolCallRecord:",
 		"ProviderConfig:",
 		"ReadinessResponse:",
 		"ApprovalRequest:",
 		"AuditEntry:",
+		"AuditExportResponse:",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("OpenAPI spec missing %q", expected)

@@ -80,8 +80,22 @@ func newMux(svc *controlplane.Service, configs ...Config) *http.ServeMux {
 		}
 		writeJSON(w, svc.CallTool(req))
 	})
+	mux.HandleFunc("GET /v1/tool-calls", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"tool_calls": svc.ToolCalls()})
+	})
+	mux.HandleFunc("GET /v1/tool-calls/{id}", func(w http.ResponseWriter, r *http.Request) {
+		record, ok := svc.ToolCall(r.PathValue("id"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, record)
+	})
 	mux.HandleFunc("GET /v1/audit", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"entries": svc.Audit()})
+	})
+	mux.HandleFunc("GET /v1/audit/export", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, auditExportPayload(svc))
 	})
 	mux.HandleFunc("GET /v1/approvals", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"approvals": svc.Approvals()})
@@ -127,6 +141,16 @@ func newMux(svc *controlplane.Service, configs ...Config) *http.ServeMux {
 		writeJSON(w, result)
 	})
 	return mux
+}
+
+func auditExportPayload(svc *controlplane.Service) map[string]any {
+	return map[string]any{
+		"schema_version": "2026-07-16.alpha1",
+		"exported_at":    time.Now().UTC().Format(time.RFC3339),
+		"audit":          svc.Audit(),
+		"tool_calls":     svc.ToolCalls(),
+		"approvals":      svc.Approvals(),
+	}
 }
 
 func readinessSummary(svc *controlplane.Service, config Config) map[string]any {

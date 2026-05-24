@@ -232,6 +232,20 @@ func mcpResources() []map[string]any {
 			"description": "Tool-call audit entries without raw provider outputs.",
 			"mimeType":    "application/json",
 		},
+		{
+			"uri":         "tool-control-plane://tool-calls",
+			"name":        "tool-calls",
+			"title":       "Tool Control Plane Tool Calls",
+			"description": "Stored tool-call records with redacted arguments and results.",
+			"mimeType":    "application/json",
+		},
+		{
+			"uri":         "tool-control-plane://audit-export",
+			"name":        "audit-export",
+			"title":       "Tool Control Plane Audit Export",
+			"description": "Governance export bundle with audit entries, tool-call records, and approvals.",
+			"mimeType":    "application/json",
+		},
 	}
 }
 
@@ -269,6 +283,10 @@ func mcpResourcePayload(svc *controlplane.Service, config Config, uri string) (a
 		return readinessSummary(svc, config), true
 	case "tool-control-plane://audit":
 		return map[string]any{"entries": svc.Audit()}, true
+	case "tool-control-plane://tool-calls":
+		return map[string]any{"tool_calls": svc.ToolCalls()}, true
+	case "tool-control-plane://audit-export":
+		return auditExportPayload(svc), true
 	default:
 		return nil, false
 	}

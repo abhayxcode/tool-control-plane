@@ -1,6 +1,9 @@
 package controlplane
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	svc := NewService()
@@ -83,6 +86,73 @@ func TestCallToolAllowsReadAction(t *testing.T) {
 	}
 	if len(svc.Audit()) != 1 {
 		t.Fatalf("expected one audit entry")
+	}
+}
+
+func TestCallToolStoresRedactedToolCallRecord(t *testing.T) {
+	svc := NewService()
+	longValue := strings.Repeat("x", toolCallRecordStringLimit+20)
+	result := svc.CallTool(ToolCallRequest{
+		RequestID:   "req-redact-123",
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "code_host",
+		Action:      "get_file",
+		Arguments: map[string]any{
+			"path":    "config/database.yaml",
+			"token":   "secret-token",
+			"content": "raw file content",
+			"nested": map[string]any{
+				"password": "secret-password",
+				"note":     longValue,
+			},
+		},
+	})
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %q", result.Status)
+	}
+
+	records := svc.ToolCalls()
+	if len(records) != 1 {
+		t.Fatalf("expected one tool call record, got %d", len(records))
+	}
+	record := records[0]
+	if record.ID != "tool_call_000001" {
+		t.Fatalf("unexpected tool call ID: %q", record.ID)
+	}
+	if record.RequestID != "req-redact-123" {
+		t.Fatalf("expected request ID on tool call record")
+	}
+	if record.Arguments["token"] != "[redacted]" {
+		t.Fatalf("expected sensitive token redacted")
+	}
+	if record.Arguments["content"] != "[redacted]" {
+		t.Fatalf("expected sensitive content redacted")
+	}
+	nested, ok := record.Arguments["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested argument map")
+	}
+	if nested["password"] != "[redacted]" {
+		t.Fatalf("expected nested sensitive password redacted")
+	}
+	note, ok := nested["note"].(string)
+	if !ok || len(note) <= toolCallRecordStringLimit || !strings.HasSuffix(note, "...[truncated]") {
+		t.Fatalf("expected long value to be bounded")
+	}
+	if record.Result["content"] != "[redacted]" {
+		t.Fatalf("expected tool result content redacted")
+	}
+
+	stored, ok := svc.ToolCall(record.ID)
+	if !ok {
+		t.Fatalf("expected tool call lookup")
+	}
+	if stored.Status != "success" || stored.Provider != "mock" {
+		t.Fatalf("expected stored success record")
 	}
 }
 

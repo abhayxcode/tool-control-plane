@@ -35,6 +35,28 @@ type ToolCallError struct {
 	Message    string `json:"message,omitempty"`
 }
 
+type ToolCallRecord struct {
+	ID                string         `json:"id"`
+	At                string         `json:"at"`
+	RequestID         string         `json:"request_id,omitempty"`
+	OrgID             string         `json:"org_id"`
+	ActorUserID       string         `json:"actor_user_id"`
+	AgentRunID        string         `json:"agent_run_id"`
+	ServiceID         string         `json:"service_id"`
+	Environment       string         `json:"environment"`
+	Capability        string         `json:"capability"`
+	Action            string         `json:"action"`
+	Arguments         map[string]any `json:"arguments,omitempty"`
+	RiskLevel         string         `json:"risk_level"`
+	Decision          string         `json:"decision"`
+	Provider          string         `json:"provider,omitempty"`
+	Status            string         `json:"status"`
+	Reason            string         `json:"reason,omitempty"`
+	Error             *ToolCallError `json:"error,omitempty"`
+	ApprovalRequestID string         `json:"approval_request_id,omitempty"`
+	Result            map[string]any `json:"result,omitempty"`
+}
+
 type AuditEntry struct {
 	At                string `json:"at"`
 	RequestID         string `json:"request_id,omitempty"`
@@ -113,11 +135,13 @@ func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 	if decision.Capability.ID != "" {
 		if err := s.validator.Validate(req, decision.Capability); err != nil {
 			s.appendAudit(req, decision.RiskLevel, DecisionInvalid, "")
-			return ToolCallResponse{
+			response := ToolCallResponse{
 				Status:    DecisionInvalid,
 				RiskLevel: decision.RiskLevel,
 				Reason:    err.Error(),
 			}
+			s.appendToolCall(req, decision.RiskLevel, DecisionInvalid, "", response)
+			return response
 		}
 	}
 	if decision.Decision != DecisionAllowed {
@@ -127,17 +151,21 @@ func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 			approvalRequestID = approval.ID
 		}
 		s.appendAudit(req, decision.RiskLevel, decision.Decision, approvalRequestID)
-		return ToolCallResponse{
+		response := ToolCallResponse{
 			Status:            decision.Decision,
 			RiskLevel:         decision.RiskLevel,
 			Reason:            decision.Reason,
 			ApprovalRequired:  decision.ApprovalRequired,
 			ApprovalRequestID: approvalRequestID,
 		}
+		s.appendToolCall(req, decision.RiskLevel, decision.Decision, approvalRequestID, response)
+		return response
 	}
 
 	s.appendAudit(req, decision.RiskLevel, decision.Decision, "")
-	return s.executeAllowedTool(req, decision.Capability, decision.RiskLevel)
+	response := s.executeAllowedTool(req, decision.Capability, decision.RiskLevel)
+	s.appendToolCall(req, decision.RiskLevel, decision.Decision, "", response)
+	return response
 }
 
 func (s *Service) executeAllowedTool(req ToolCallRequest, definition CapabilityDefinition, riskLevel string) ToolCallResponse {
@@ -160,6 +188,7 @@ func (s *Service) executeApprovedTool(req ToolCallRequest, approvalID string) To
 	}
 	definition.RiskLevel = riskLevel
 	response := s.adapters.Execute(definition, req)
+	s.appendToolCall(req, riskLevel, DecisionApprovedExecuted, approvalID, response)
 	if response.Status != "success" {
 		return response
 	}
@@ -169,6 +198,14 @@ func (s *Service) executeApprovedTool(req ToolCallRequest, approvalID string) To
 
 func (s *Service) Audit() []AuditEntry {
 	return s.store.Audit()
+}
+
+func (s *Service) ToolCalls() []ToolCallRecord {
+	return s.store.ToolCalls()
+}
+
+func (s *Service) ToolCall(id string) (ToolCallRecord, bool) {
+	return s.store.ToolCall(id)
 }
 
 func (s *Service) Approval(id string) (ApprovalRequest, bool) {
@@ -303,5 +340,28 @@ func (s *Service) appendAudit(req ToolCallRequest, riskLevel string, decision st
 		RiskLevel:         riskLevel,
 		Decision:          decision,
 		ApprovalRequestID: approvalRequestID,
+	})
+}
+
+func (s *Service) appendToolCall(req ToolCallRequest, riskLevel string, decision string, approvalRequestID string, response ToolCallResponse) {
+	s.store.AppendToolCall(ToolCallRecord{
+		At:                time.Now().UTC().Format(time.RFC3339Nano),
+		RequestID:         req.RequestID,
+		OrgID:             req.OrgID,
+		ActorUserID:       req.ActorUserID,
+		AgentRunID:        req.AgentRunID,
+		ServiceID:         req.ServiceID,
+		Environment:       req.Environment,
+		Capability:        req.Capability,
+		Action:            req.Action,
+		Arguments:         redactToolCallMap(req.Arguments),
+		RiskLevel:         riskLevel,
+		Decision:          decision,
+		Provider:          response.Provider,
+		Status:            response.Status,
+		Reason:            response.Reason,
+		Error:             response.Error,
+		ApprovalRequestID: firstNonEmptyToolCallValue(approvalRequestID, response.ApprovalRequestID),
+		Result:            redactToolCallMap(response.Result),
 	})
 }

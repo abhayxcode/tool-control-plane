@@ -91,6 +91,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/ReadinessResponse"
   /v1/tool-calls:
+    get:
+      summary: List stored tool call records
+      operationId: listToolCalls
+      responses:
+        "200":
+          description: Ordered tool call records with redacted arguments and results.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tool_calls]
+                properties:
+                  tool_calls:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ToolCallRecord"
     post:
       summary: Execute or request approval for a governed tool call
       operationId: callTool
@@ -109,6 +125,21 @@ paths:
                 $ref: "#/components/schemas/ToolCallResponse"
         "400":
           description: Invalid JSON request body.
+  /v1/tool-calls/{id}:
+    get:
+      summary: Get one stored tool call record
+      operationId: getToolCall
+      parameters:
+        - $ref: "#/components/parameters/ToolCallID"
+      responses:
+        "200":
+          description: Tool call record with redacted arguments and results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolCallRecord"
+        "404":
+          description: Tool call record was not found.
   /v1/audit:
     get:
       summary: List audit entries
@@ -126,6 +157,17 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/AuditEntry"
+  /v1/audit/export:
+    get:
+      summary: Export audit, tool call records, and approvals
+      operationId: exportAuditBundle
+      responses:
+        "200":
+          description: Governance export bundle for review and evaluation pipelines.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditExportResponse"
   /v1/approvals:
     get:
       summary: List approval requests
@@ -232,6 +274,13 @@ components:
       schema:
         type: string
       example: approval_000001
+    ToolCallID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: tool_call_000001
   schemas:
     JSONValue:
       description: Arbitrary JSON value.
@@ -488,6 +537,64 @@ components:
           type: boolean
         message:
           type: string
+    ToolCallRecord:
+      type: object
+      required:
+        - id
+        - at
+        - org_id
+        - actor_user_id
+        - agent_run_id
+        - service_id
+        - environment
+        - capability
+        - action
+        - risk_level
+        - decision
+        - status
+      properties:
+        id:
+          type: string
+          example: tool_call_000001
+        at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+        org_id:
+          type: string
+        actor_user_id:
+          type: string
+        agent_run_id:
+          type: string
+        service_id:
+          type: string
+        environment:
+          type: string
+        capability:
+          type: string
+        action:
+          type: string
+        arguments:
+          $ref: "#/components/schemas/JSONObject"
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        decision:
+          type: string
+          enum: [allowed, denied, invalid, approval_required, approved_executed]
+        provider:
+          type: string
+        status:
+          type: string
+          enum: [success, denied, invalid, approval_required, error]
+        reason:
+          type: string
+        error:
+          $ref: "#/components/schemas/ToolCallError"
+        approval_request_id:
+          type: string
+        result:
+          $ref: "#/components/schemas/JSONObject"
     AuditEntry:
       type: object
       required:
@@ -615,6 +722,28 @@ components:
           $ref: "#/components/schemas/ToolCallResponse"
         reason:
           type: string
+    AuditExportResponse:
+      type: object
+      required: [schema_version, exported_at, audit, tool_calls, approvals]
+      properties:
+        schema_version:
+          type: string
+          example: 2026-07-16.alpha1
+        exported_at:
+          type: string
+          format: date-time
+        audit:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCallRecord"
+        approvals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApprovalRequest"
     RiskLevel:
       type: string
       enum: [unknown, read, write_low, write_high]

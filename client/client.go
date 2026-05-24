@@ -78,6 +78,24 @@ func (c *Client) CallTool(ctx context.Context, req ToolCallRequest) (ToolCallRes
 	return result, nil
 }
 
+func (c *Client) ToolCalls(ctx context.Context) ([]ToolCallRecord, error) {
+	var result struct {
+		ToolCalls []ToolCallRecord `json:"tool_calls"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/tool-calls", nil, &result); err != nil {
+		return nil, err
+	}
+	return result.ToolCalls, nil
+}
+
+func (c *Client) ToolCall(ctx context.Context, id string) (ToolCallRecord, error) {
+	var result ToolCallRecord
+	if err := c.do(ctx, http.MethodGet, "/v1/tool-calls/"+url.PathEscape(id), nil, &result); err != nil {
+		return ToolCallRecord{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) Audit(ctx context.Context) ([]AuditEntry, error) {
 	var result struct {
 		Entries []AuditEntry `json:"entries"`
@@ -86,6 +104,14 @@ func (c *Client) Audit(ctx context.Context) ([]AuditEntry, error) {
 		return nil, err
 	}
 	return result.Entries, nil
+}
+
+func (c *Client) AuditExport(ctx context.Context) (AuditExportResponse, error) {
+	var result AuditExportResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/audit/export", nil, &result); err != nil {
+		return AuditExportResponse{}, err
+	}
+	return result, nil
 }
 
 func (c *Client) Approvals(ctx context.Context) ([]ApprovalRequest, error) {

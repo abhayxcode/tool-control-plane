@@ -85,6 +85,86 @@ func (s *SQLiteStore) Audit() []AuditEntry {
 	return result
 }
 
+func (s *SQLiteStore) AppendToolCall(record ToolCallRecord) ToolCallRecord {
+	tx, err := s.db.Begin()
+	panicOnStoreError(err)
+	defer tx.Rollback()
+
+	result, err := tx.Exec(`INSERT INTO tool_call_ids DEFAULT VALUES`)
+	panicOnStoreError(err)
+	seq, err := result.LastInsertId()
+	panicOnStoreError(err)
+	record.ID = toolCallID(int(seq))
+	argsJSON := mustMarshalArgs(record.Arguments)
+	resultJSON := mustMarshalArgs(record.Result)
+	errorJSON := mustMarshalToolCallError(record.Error)
+
+	_, err = tx.Exec(`
+		INSERT INTO tool_calls (
+			id, seq, at, request_id, org_id, actor_user_id, agent_run_id,
+			service_id, environment, capability, action, arguments_json,
+			risk_level, decision, provider, status, reason, error_json,
+			approval_request_id, result_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.ID,
+		seq,
+		record.At,
+		record.RequestID,
+		record.OrgID,
+		record.ActorUserID,
+		record.AgentRunID,
+		record.ServiceID,
+		record.Environment,
+		record.Capability,
+		record.Action,
+		argsJSON,
+		record.RiskLevel,
+		record.Decision,
+		record.Provider,
+		record.Status,
+		record.Reason,
+		errorJSON,
+		record.ApprovalRequestID,
+		resultJSON,
+	)
+	panicOnStoreError(err)
+	panicOnStoreError(tx.Commit())
+	return record
+}
+
+func (s *SQLiteStore) ToolCalls() []ToolCallRecord {
+	rows, err := s.db.Query(`
+		SELECT id, at, request_id, org_id, actor_user_id, agent_run_id,
+			service_id, environment, capability, action, arguments_json,
+			risk_level, decision, provider, status, reason, error_json,
+			approval_request_id, result_json
+		FROM tool_calls
+		ORDER BY seq ASC`)
+	panicOnStoreError(err)
+	defer rows.Close()
+
+	var result []ToolCallRecord
+	for rows.Next() {
+		record, ok := scanToolCall(rows)
+		if ok {
+			result = append(result, record)
+		}
+	}
+	panicOnStoreError(rows.Err())
+	return result
+}
+
+func (s *SQLiteStore) ToolCall(id string) (ToolCallRecord, bool) {
+	row := s.db.QueryRow(`
+		SELECT id, at, request_id, org_id, actor_user_id, agent_run_id,
+			service_id, environment, capability, action, arguments_json,
+			risk_level, decision, provider, status, reason, error_json,
+			approval_request_id, result_json
+		FROM tool_calls
+		WHERE id = ?`, id)
+	return scanToolCall(row)
+}
+
 func (s *SQLiteStore) CreateApproval(approval ApprovalRequest) ApprovalRequest {
 	tx, err := s.db.Begin()
 	panicOnStoreError(err)
@@ -220,6 +300,33 @@ func (s *SQLiteStore) migrate() error {
 			seq INTEGER PRIMARY KEY AUTOINCREMENT
 		);
 
+		CREATE TABLE IF NOT EXISTS tool_call_ids (
+			seq INTEGER PRIMARY KEY AUTOINCREMENT
+		);
+
+		CREATE TABLE IF NOT EXISTS tool_calls (
+			id TEXT PRIMARY KEY,
+			seq INTEGER NOT NULL UNIQUE,
+			at TEXT NOT NULL,
+			request_id TEXT NOT NULL DEFAULT '',
+			org_id TEXT NOT NULL,
+			actor_user_id TEXT NOT NULL,
+			agent_run_id TEXT NOT NULL,
+			service_id TEXT NOT NULL,
+			environment TEXT NOT NULL,
+			capability TEXT NOT NULL,
+			action TEXT NOT NULL,
+			arguments_json TEXT NOT NULL DEFAULT '{}',
+			risk_level TEXT NOT NULL,
+			decision TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			reason TEXT NOT NULL DEFAULT '',
+			error_json TEXT NOT NULL DEFAULT '',
+			approval_request_id TEXT NOT NULL DEFAULT '',
+			result_json TEXT NOT NULL DEFAULT '{}'
+		);
+
 		CREATE TABLE IF NOT EXISTS approvals (
 			id TEXT PRIMARY KEY,
 			seq INTEGER NOT NULL UNIQUE,
@@ -282,11 +389,56 @@ func scanApproval(scanner approvalScanner) (ApprovalRequest, bool) {
 	return approval, true
 }
 
+func scanToolCall(scanner approvalScanner) (ToolCallRecord, bool) {
+	var record ToolCallRecord
+	var argsJSON string
+	var resultJSON string
+	var errorJSON string
+	err := scanner.Scan(
+		&record.ID,
+		&record.At,
+		&record.RequestID,
+		&record.OrgID,
+		&record.ActorUserID,
+		&record.AgentRunID,
+		&record.ServiceID,
+		&record.Environment,
+		&record.Capability,
+		&record.Action,
+		&argsJSON,
+		&record.RiskLevel,
+		&record.Decision,
+		&record.Provider,
+		&record.Status,
+		&record.Reason,
+		&errorJSON,
+		&record.ApprovalRequestID,
+		&resultJSON,
+	)
+	if err == sql.ErrNoRows {
+		return ToolCallRecord{}, false
+	}
+	panicOnStoreError(err)
+	record.Arguments = mustUnmarshalArgs(argsJSON)
+	record.Result = mustUnmarshalArgs(resultJSON)
+	record.Error = mustUnmarshalToolCallError(errorJSON)
+	return record, true
+}
+
 func mustMarshalArgs(args map[string]any) string {
 	if args == nil {
 		args = map[string]any{}
 	}
 	result, err := json.Marshal(args)
+	panicOnStoreError(err)
+	return string(result)
+}
+
+func mustMarshalToolCallError(value *ToolCallError) string {
+	if value == nil {
+		return ""
+	}
+	result, err := json.Marshal(value)
 	panicOnStoreError(err)
 	return string(result)
 }
@@ -302,6 +454,16 @@ func mustUnmarshalArgs(value string) map[string]any {
 		return map[string]any{}
 	}
 	return result
+}
+
+func mustUnmarshalToolCallError(value string) *ToolCallError {
+	if value == "" {
+		return nil
+	}
+	var result ToolCallError
+	err := json.Unmarshal([]byte(value), &result)
+	panicOnStoreError(err)
+	return &result
 }
 
 func boolToInt(value bool) int {

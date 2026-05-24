@@ -108,6 +108,76 @@ func TestSQLiteStoreContinuesApprovalIDsAfterReopen(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePersistsToolCalls(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "controlplane.sqlite3")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	record := store.AppendToolCall(ToolCallRecord{
+		At:          "2026-07-09T00:00:02Z",
+		RequestID:   "req-tool-123",
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "metrics",
+		Action:      "get_service_health",
+		Arguments: map[string]any{
+			"target": "backend-prod",
+		},
+		RiskLevel: RiskRead,
+		Decision:  DecisionAllowed,
+		Provider:  "mock",
+		Status:    "success",
+		Result: map[string]any{
+			"status": "degraded",
+		},
+		Error: &ToolCallError{
+			Provider:  "mock",
+			Category:  "transient",
+			Operation: "metrics.get_service_health",
+			Retryable: true,
+			Message:   "kept for persistence check",
+		},
+	})
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite store: %v", err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("reopen sqlite store: %v", err)
+	}
+	defer reopened.Close()
+
+	records := reopened.ToolCalls()
+	if len(records) != 1 {
+		t.Fatalf("expected one persisted tool call, got %d", len(records))
+	}
+	if records[0].ID != record.ID || records[0].RequestID != "req-tool-123" {
+		t.Fatalf("expected persisted tool call identity")
+	}
+	if records[0].Arguments["target"] != "backend-prod" {
+		t.Fatalf("expected persisted tool call arguments")
+	}
+	if records[0].Result["status"] != "degraded" {
+		t.Fatalf("expected persisted tool call result")
+	}
+	if records[0].Error == nil || !records[0].Error.Retryable {
+		t.Fatalf("expected persisted tool call error")
+	}
+
+	stored, ok := reopened.ToolCall(record.ID)
+	if !ok {
+		t.Fatalf("expected direct tool call lookup")
+	}
+	if stored.ID != record.ID {
+		t.Fatalf("expected direct lookup to return matching ID")
+	}
+}
+
 func TestServiceCanUseSQLiteStore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "controlplane.sqlite3")
 	store, err := NewSQLiteStore(path)
