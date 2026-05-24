@@ -3,7 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -160,6 +164,9 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_CODE_PROVIDER", "github")
 	t.Setenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER", "github")
 	t.Setenv("GITHUB_TOKEN", "github-token")
+	t.Setenv("GITHUB_APP_ID", "12345")
+	t.Setenv("GITHUB_APP_INSTALLATION_ID", "42")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", "line1\\nline2")
 	t.Setenv("GITHUB_API_BASE_URL", "https://github.example/api/v3")
 	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS", "4")
 	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF", "25ms")
@@ -186,6 +193,9 @@ func TestConfigFromEnv(t *testing.T) {
 	}
 	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
+	}
+	if config.GitHubAppID != "12345" || config.GitHubAppInstallationID != "42" || config.GitHubAppPrivateKey != "line1\nline2" {
+		t.Fatalf("unexpected GitHub App config")
 	}
 	if config.GitHubMaxAttempts != 4 || config.GitHubRetryBackoff != 25*time.Millisecond {
 		t.Fatalf("unexpected GitHub retry config")
@@ -260,11 +270,49 @@ func TestCapabilitiesExposeProviderConfigReadiness(t *testing.T) {
 	if body.ProviderConfig["github_token_configured"] != true {
 		t.Fatalf("expected configured github token")
 	}
+	if body.ProviderConfig["github_auth_mode"] != "token" {
+		t.Fatalf("expected token auth mode, got %#v", body.ProviderConfig["github_auth_mode"])
+	}
 	if body.ProviderConfig["ready"] != true {
 		t.Fatalf("expected provider config ready")
 	}
 	if body.ProviderConfig["store"] != "sqlite" {
 		t.Fatalf("expected sqlite store, got %#v", body.ProviderConfig["store"])
+	}
+}
+
+func TestCapabilitiesExposeGitHubAppProviderConfigReadiness(t *testing.T) {
+	mux := newMux(controlplane.NewService(), Config{
+		CodeProvider:            controlplane.GitHubProvider,
+		GitHubAppID:             "12345",
+		GitHubAppInstallationID: "42",
+		GitHubAppPrivateKey:     "present",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig map[string]any `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig["github_auth_mode"] != "github_app" {
+		t.Fatalf("expected github_app auth mode, got %#v", body.ProviderConfig["github_auth_mode"])
+	}
+	if body.ProviderConfig["github_app_configured"] != true {
+		t.Fatalf("expected github app configured")
+	}
+	if body.ProviderConfig["github_token_configured"] != false {
+		t.Fatalf("expected no static github token")
+	}
+	if body.ProviderConfig["ready"] != true {
+		t.Fatalf("expected provider config ready")
 	}
 }
 
@@ -390,6 +438,72 @@ func TestReadinessReportsReadyProviderConfig(t *testing.T) {
 	}
 	if body.Checks.RepositoryAccess["status"] != "ok" {
 		t.Fatalf("expected repository access ok, got %#v", body.Checks.RepositoryAccess)
+	}
+}
+
+func TestReadinessUsesGitHubAppForRepositoryAccess(t *testing.T) {
+	privateKey := testGitHubAppPrivateKeyPEM(t)
+	var tokenRequests int
+	var repositoryRequests int
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/app/installations/42/access_tokens" {
+			tokenRequests++
+			if r.Header.Get("Authorization") == "" {
+				t.Fatalf("expected github app JWT authorization")
+			}
+			w.Write([]byte(`{"token":"installation-token","expires_at":"2026-07-16T13:00:00Z"}`))
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/backend" {
+			repositoryRequests++
+			if r.Header.Get("Authorization") != "Bearer installation-token" {
+				t.Fatalf("expected installation token, got %q", r.Header.Get("Authorization"))
+			}
+			w.Write([]byte(`{"full_name":"acme/backend"}`))
+			return
+		}
+		t.Fatalf("unexpected GitHub path: %s %s", r.Method, r.URL.Path)
+	}))
+	defer github.Close()
+
+	mux := newMux(controlplane.NewService(), Config{
+		CodeProvider:            controlplane.GitHubProvider,
+		GitHubAppID:             "12345",
+		GitHubAppInstallationID: "42",
+		GitHubAppPrivateKey:     privateKey,
+		GitHubBaseURL:           github.URL,
+		DemoRepository:          "acme/backend",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/readiness", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		Status string `json:"status"`
+		Checks struct {
+			ProviderConfig   map[string]any `json:"provider_config"`
+			RepositoryAccess map[string]any `json:"repository_access"`
+		} `json:"checks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode readiness: %v", err)
+	}
+	if body.Status != "ok" {
+		t.Fatalf("expected ok readiness, got %q", body.Status)
+	}
+	if body.Checks.ProviderConfig["github_auth_mode"] != "github_app" {
+		t.Fatalf("expected github app auth mode, got %#v", body.Checks.ProviderConfig["github_auth_mode"])
+	}
+	if body.Checks.RepositoryAccess["status"] != "ok" {
+		t.Fatalf("expected repository access ok, got %#v", body.Checks.RepositoryAccess)
+	}
+	if tokenRequests != 1 || repositoryRequests != 1 {
+		t.Fatalf("expected one token and one repository request, got %d and %d", tokenRequests, repositoryRequests)
 	}
 }
 
@@ -628,4 +742,16 @@ func TestRateLimitAllowsHealth(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected health allowed, got %d", resp.Code)
 	}
+}
+
+func testGitHubAppPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}))
 }

@@ -1,11 +1,17 @@
 package controlplane
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestAdapterRegistryExecutesProviderAdapter(t *testing.T) {
@@ -73,6 +79,76 @@ func TestGitHubAdapterRequiresToken(t *testing.T) {
 	}, ToolCallRequest{})
 	if err == nil {
 		t.Fatalf("expected missing token error")
+	}
+}
+
+func TestGitHubAdapterUsesGitHubAppInstallationToken(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	privateKeyPEM := testGitHubAppPrivateKeyPEM(t)
+	var tokenRequests int
+	var apiRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/app/installations/42/access_tokens" {
+			tokenRequests++
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") {
+				t.Fatalf("expected bearer JWT auth, got %q", auth)
+			}
+			assertJWTIssuer(t, strings.TrimPrefix(auth, "Bearer "), "12345")
+			w.Write([]byte(`{"token":"installation-token","expires_at":"2026-07-16T13:00:00Z"}`))
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/backend/commits/main/check-runs" {
+			apiRequests++
+			if r.Header.Get("Authorization") != "Bearer installation-token" {
+				t.Fatalf("expected installation token auth, got %q", r.Header.Get("Authorization"))
+			}
+			w.Write([]byte(`{"check_runs":[]}`))
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	source, err := NewGitHubAppTokenSource(GitHubAppTokenSourceConfig{
+		AppID:          "12345",
+		InstallationID: "42",
+		PrivateKeyPEM:  privateKeyPEM,
+		BaseURL:        server.URL,
+		Client:         server.Client(),
+		Now:            func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new github app token source: %v", err)
+	}
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		TokenSource: source,
+		BaseURL:     server.URL,
+		Client:      server.Client(),
+	})
+	for i := 0; i < 2; i++ {
+		result, err := adapter.Execute(CapabilityDefinition{
+			ID:       "ci.get_checks",
+			Provider: GitHubProvider,
+		}, ToolCallRequest{
+			Arguments: map[string]any{
+				"repository": "acme/backend",
+				"ref":        "main",
+			},
+		})
+		if err != nil {
+			t.Fatalf("expected app-auth checks result, got error: %v", err)
+		}
+		if result["status"] != "pending" {
+			t.Fatalf("unexpected status: %#v", result["status"])
+		}
+	}
+	if tokenRequests != 1 {
+		t.Fatalf("expected cached installation token, got %d token requests", tokenRequests)
+	}
+	if apiRequests != 2 {
+		t.Fatalf("expected two API requests, got %d", apiRequests)
 	}
 }
 
@@ -1194,5 +1270,36 @@ func assertStringSlice(t *testing.T, value any, expected []string) {
 		if items[index] != expected[index] {
 			t.Fatalf("expected %#v, got %#v", expected, items)
 		}
+	}
+}
+
+func testGitHubAppPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}))
+}
+
+func assertJWTIssuer(t *testing.T, token string, expectedIssuer string) {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("expected JWT with three parts")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode jwt payload: %v", err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatalf("decode jwt claims: %v", err)
+	}
+	if claims["iss"] != expectedIssuer {
+		t.Fatalf("expected issuer %q, got %#v", expectedIssuer, claims["iss"])
 	}
 }

@@ -26,6 +26,7 @@ type githubFileChange struct {
 
 type GitHubAdapterConfig struct {
 	Token        string
+	TokenSource  GitHubTokenSource
 	BaseURL      string
 	Client       *http.Client
 	MaxAttempts  int
@@ -33,7 +34,7 @@ type GitHubAdapterConfig struct {
 }
 
 type GitHubAdapter struct {
-	token        string
+	tokenSource  GitHubTokenSource
 	baseURL      string
 	client       *http.Client
 	maxAttempts  int
@@ -60,8 +61,12 @@ func NewGitHubAdapter(config GitHubAdapterConfig) GitHubAdapter {
 	if retryBackoff == 0 && config.MaxAttempts == 0 {
 		retryBackoff = defaultGitHubHTTPRetryBackoff
 	}
+	tokenSource := config.TokenSource
+	if tokenSource == nil {
+		tokenSource = StaticGitHubTokenSource{TokenValue: config.Token}
+	}
 	return GitHubAdapter{
-		token:        config.Token,
+		tokenSource:  tokenSource,
 		baseURL:      baseURL,
 		client:       client,
 		maxAttempts:  maxAttempts,
@@ -70,8 +75,8 @@ func NewGitHubAdapter(config GitHubAdapterConfig) GitHubAdapter {
 }
 
 func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequest) (map[string]any, error) {
-	if strings.TrimSpace(a.token) == "" {
-		return nil, errors.New("github adapter requires GITHUB_TOKEN")
+	if a.tokenSource == nil || !a.tokenSource.Configured() {
+		return nil, errors.New("github adapter requires GITHUB_TOKEN or GitHub App installation credentials")
 	}
 
 	switch definition.ID {
@@ -880,6 +885,10 @@ func (a GitHubAdapter) doStatus(method string, pathOrURL string, accept string, 
 	}
 
 	maxAttempts := a.attemptsForMethod(method)
+	token, err := a.tokenSource.Token()
+	if err != nil {
+		return nil, requestURL, 0, 0, err
+	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		var attemptBody io.Reader
 		if requestBodyBytes != nil {
@@ -890,7 +899,7 @@ func (a GitHubAdapter) doStatus(method string, pathOrURL string, accept string, 
 			return nil, "", 0, attempt, err
 		}
 		httpReq.Header.Set("Accept", accept)
-		httpReq.Header.Set("Authorization", "Bearer "+a.token)
+		httpReq.Header.Set("Authorization", "Bearer "+token)
 		httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		if requestBodyBytes != nil {
 			httpReq.Header.Set("Content-Type", "application/json")

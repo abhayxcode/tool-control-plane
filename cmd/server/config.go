@@ -12,33 +12,41 @@ import (
 )
 
 type Config struct {
-	Addr               string
-	ShutdownTimeout    time.Duration
-	APIToken           string
-	RateLimitPerMinute int
-	Store              string
-	SQLitePath         string
-	CodeProvider       string
-	DeployProvider     string
-	GitHubToken        string
-	GitHubBaseURL      string
-	GitHubMaxAttempts  int
-	GitHubRetryBackoff time.Duration
-	DemoRepository     string
+	Addr                    string
+	ShutdownTimeout         time.Duration
+	APIToken                string
+	RateLimitPerMinute      int
+	Store                   string
+	SQLitePath              string
+	CodeProvider            string
+	DeployProvider          string
+	GitHubToken             string
+	GitHubAppID             string
+	GitHubAppInstallationID string
+	GitHubAppPrivateKey     string
+	GitHubAppPrivateKeyPath string
+	GitHubBaseURL           string
+	GitHubMaxAttempts       int
+	GitHubRetryBackoff      time.Duration
+	DemoRepository          string
 }
 
 func configFromEnv() (Config, error) {
 	config := Config{
-		Addr:            envOrDefault("TOOL_CONTROL_PLANE_ADDR", ":4100"),
-		ShutdownTimeout: 10 * time.Second,
-		APIToken:        os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"),
-		Store:           os.Getenv("TOOL_CONTROL_PLANE_STORE"),
-		SQLitePath:      os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
-		CodeProvider:    os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
-		DeployProvider:  os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
-		GitHubToken:     os.Getenv("GITHUB_TOKEN"),
-		GitHubBaseURL:   os.Getenv("GITHUB_API_BASE_URL"),
-		DemoRepository:  os.Getenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY"),
+		Addr:                    envOrDefault("TOOL_CONTROL_PLANE_ADDR", ":4100"),
+		ShutdownTimeout:         10 * time.Second,
+		APIToken:                os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"),
+		Store:                   os.Getenv("TOOL_CONTROL_PLANE_STORE"),
+		SQLitePath:              os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
+		CodeProvider:            os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
+		DeployProvider:          os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
+		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
+		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
+		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),
+		GitHubAppPrivateKey:     normalizeGitHubAppPrivateKey(os.Getenv("GITHUB_APP_PRIVATE_KEY")),
+		GitHubAppPrivateKeyPath: os.Getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
+		GitHubBaseURL:           os.Getenv("GITHUB_API_BASE_URL"),
+		DemoRepository:          os.Getenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY"),
 	}
 	rawShutdownTimeout := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT"))
 	if rawShutdownTimeout != "" {
@@ -92,8 +100,13 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 			}
 		}
 		registry = registry.WithProviderOverrides(overrides)
+		tokenSource, err := githubTokenSourceFromConfig(config, http.DefaultClient)
+		if err != nil {
+			return nil, err
+		}
 		adapters = controlplane.DefaultAdapterRegistryWithGitHub(controlplane.GitHubAdapterConfig{
 			Token:        config.GitHubToken,
+			TokenSource:  tokenSource,
 			BaseURL:      config.GitHubBaseURL,
 			MaxAttempts:  config.GitHubMaxAttempts,
 			RetryBackoff: config.GitHubRetryBackoff,
@@ -127,4 +140,49 @@ func envOrDefault(key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func githubTokenSourceFromConfig(config Config, client *http.Client) (controlplane.GitHubTokenSource, error) {
+	if strings.TrimSpace(config.GitHubToken) != "" {
+		return controlplane.StaticGitHubTokenSource{TokenValue: config.GitHubToken}, nil
+	}
+	if !githubAppConfigured(config) {
+		return controlplane.StaticGitHubTokenSource{}, nil
+	}
+	privateKey, err := githubAppPrivateKey(config)
+	if err != nil {
+		return nil, err
+	}
+	return controlplane.NewGitHubAppTokenSource(controlplane.GitHubAppTokenSourceConfig{
+		AppID:          config.GitHubAppID,
+		InstallationID: config.GitHubAppInstallationID,
+		PrivateKeyPEM:  privateKey,
+		BaseURL:        config.GitHubBaseURL,
+		Client:         client,
+	})
+}
+
+func githubAppConfigured(config Config) bool {
+	return strings.TrimSpace(config.GitHubAppID) != "" &&
+		strings.TrimSpace(config.GitHubAppInstallationID) != "" &&
+		(strings.TrimSpace(config.GitHubAppPrivateKey) != "" || strings.TrimSpace(config.GitHubAppPrivateKeyPath) != "")
+}
+
+func githubAppPrivateKey(config Config) (string, error) {
+	if strings.TrimSpace(config.GitHubAppPrivateKey) != "" {
+		return normalizeGitHubAppPrivateKey(config.GitHubAppPrivateKey), nil
+	}
+	path := strings.TrimSpace(config.GitHubAppPrivateKeyPath)
+	if path == "" {
+		return "", nil
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read GITHUB_APP_PRIVATE_KEY_PATH: %w", err)
+	}
+	return normalizeGitHubAppPrivateKey(string(content)), nil
+}
+
+func normalizeGitHubAppPrivateKey(value string) string {
+	return strings.ReplaceAll(value, `\n`, "\n")
 }

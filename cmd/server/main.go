@@ -158,12 +158,16 @@ func providerConfigSummary(config Config) map[string]any {
 	codeProvider := providerOrMock(config.CodeProvider)
 	deployProvider := providerOrMock(config.DeployProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
-	githubConfigured := strings.TrimSpace(config.GitHubToken) != ""
+	githubTokenConfigured := strings.TrimSpace(config.GitHubToken) != ""
+	githubAppAuthConfigured := githubAppConfigured(config)
+	githubConfigured := githubTokenConfigured || githubAppAuthConfigured
 	return map[string]any{
 		"code_provider":           codeProvider,
 		"deploy_provider":         deployProvider,
 		"github_selected":         githubSelected,
-		"github_token_configured": githubConfigured,
+		"github_auth_mode":        githubAuthMode(config),
+		"github_token_configured": githubTokenConfigured,
+		"github_app_configured":   githubAppAuthConfigured,
 		"github_base_url_set":     strings.TrimSpace(config.GitHubBaseURL) != "",
 		"github_max_attempts":     githubMaxAttempts(config),
 		"github_retry_backoff_ms": int(githubRetryBackoff(config) / time.Millisecond),
@@ -178,8 +182,8 @@ func providerConfigBlockers(config Config) []string {
 	codeProvider := providerOrMock(config.CodeProvider)
 	deployProvider := providerOrMock(config.DeployProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
-	if githubSelected && strings.TrimSpace(config.GitHubToken) == "" {
-		return []string{"GITHUB_TOKEN is required when a GitHub provider is selected."}
+	if githubSelected && !githubCredentialConfigured(config) {
+		return []string{"GITHUB_TOKEN or GitHub App installation credentials are required when a GitHub provider is selected."}
 	}
 	return []string{}
 }
@@ -203,11 +207,11 @@ func repositoryAccessSummary(config Config) map[string]any {
 			"reason":     "GitHub provider is not selected.",
 		}
 	}
-	if strings.TrimSpace(config.GitHubToken) == "" {
+	if !githubCredentialConfigured(config) {
 		return map[string]any{
 			"status":     "blocked",
 			"repository": repository,
-			"reason":     "GITHUB_TOKEN is required before repository access can be checked.",
+			"reason":     "GITHUB_TOKEN or GitHub App installation credentials are required before repository access can be checked.",
 		}
 	}
 	owner, repo, ok := splitRepository(repository)
@@ -250,13 +254,21 @@ func checkGitHubRepositoryAccess(config Config, owner string, repo string) (stri
 		baseURL = "https://api.github.com"
 	}
 	repoURL := baseURL + "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repo)
+	client := &http.Client{Timeout: 2 * time.Second}
+	tokenSource, err := githubTokenSourceFromConfig(config, client)
+	if err != nil {
+		return "blocked", err.Error()
+	}
+	token, err := tokenSource.Token()
+	if err != nil {
+		return "blocked", err.Error()
+	}
 	req, err := http.NewRequest(http.MethodGet, repoURL, nil)
 	if err != nil {
 		return "blocked", err.Error()
 	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(config.GitHubToken))
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
-	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "blocked", err.Error()
@@ -266,6 +278,20 @@ func checkGitHubRepositoryAccess(config Config, owner string, repo string) (stri
 		return "ok", ""
 	}
 	return "blocked", "GitHub repository access check returned HTTP " + strconv.Itoa(resp.StatusCode) + "."
+}
+
+func githubCredentialConfigured(config Config) bool {
+	return strings.TrimSpace(config.GitHubToken) != "" || githubAppConfigured(config)
+}
+
+func githubAuthMode(config Config) string {
+	if strings.TrimSpace(config.GitHubToken) != "" {
+		return "token"
+	}
+	if githubAppConfigured(config) {
+		return "github_app"
+	}
+	return "none"
 }
 
 func providerOrMock(provider string) string {
