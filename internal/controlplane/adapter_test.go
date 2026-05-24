@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -248,6 +249,107 @@ func TestSentryAdapterReturnsHealthyWhenNoIssues(t *testing.T) {
 	}
 	if result["source_url"] != "" {
 		t.Fatalf("expected no source url, got %#v", result["source_url"])
+	}
+}
+
+func TestPrometheusAdapterGetsServiceHealth(t *testing.T) {
+	requestsByQuery := map[string]int{}
+	var authCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/query" {
+			t.Fatalf("unexpected prometheus request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("Authorization") == "Bearer prom-token" {
+			authCount++
+		}
+		query := r.URL.Query().Get("query")
+		requestsByQuery[query]++
+		value := ""
+		switch {
+		case strings.HasPrefix(query, "min(up"):
+			if !strings.Contains(query, `service="backend"`) || !strings.Contains(query, `environment="prod"`) {
+				t.Fatalf("expected service/environment selectors, got %q", query)
+			}
+			value = "1"
+		case strings.Contains(query, "histogram_quantile"):
+			value = "1.234"
+		case strings.Contains(query, "http_requests_total"):
+			if !strings.Contains(query, `status=~"5.."`) {
+				t.Fatalf("expected 5xx status matcher, got %q", query)
+			}
+			value = "6.2"
+		default:
+			t.Fatalf("unexpected query: %q", query)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[123,"%s"]}]}}`, value)
+	}))
+	defer server.Close()
+
+	adapter := NewPrometheusAdapter(PrometheusAdapterConfig{
+		BaseURL:     server.URL,
+		BearerToken: "prom-token",
+		Client:      server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "metrics.get_service_health",
+		Provider: PrometheusProvider,
+	}, ToolCallRequest{
+		ServiceID:   "backend",
+		Environment: "prod",
+	})
+	if err != nil {
+		t.Fatalf("expected prometheus result, got error: %v", err)
+	}
+	if authCount != 3 {
+		t.Fatalf("expected bearer token on three requests, got %d", authCount)
+	}
+	if len(requestsByQuery) != 3 {
+		t.Fatalf("expected three queries, got %#v", requestsByQuery)
+	}
+	if result["status"] != "degraded" {
+		t.Fatalf("expected degraded status, got %#v", result["status"])
+	}
+	if result["up"] != float64(1) {
+		t.Fatalf("unexpected up value: %#v", result["up"])
+	}
+	if result["latency_p95_ms"] != float64(1234) {
+		t.Fatalf("unexpected latency value: %#v", result["latency_p95_ms"])
+	}
+	if result["error_rate_percent"] != 6.2 {
+		t.Fatalf("unexpected error rate value: %#v", result["error_rate_percent"])
+	}
+	if result["source_url"] == "" {
+		t.Fatalf("expected source url")
+	}
+}
+
+func TestPrometheusAdapterReturnsUnknownWhenNoSamples(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+	}))
+	defer server.Close()
+
+	adapter := NewPrometheusAdapter(PrometheusAdapterConfig{
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "metrics.get_service_health",
+		Provider: PrometheusProvider,
+	}, ToolCallRequest{
+		ServiceID:   "backend",
+		Environment: "prod",
+	})
+	if err != nil {
+		t.Fatalf("expected prometheus result, got error: %v", err)
+	}
+	if result["status"] != "unknown" {
+		t.Fatalf("expected unknown status, got %#v", result["status"])
+	}
+	if strings.Contains(result["evidence"].(string), "returned no metric samples") == false {
+		t.Fatalf("unexpected evidence: %#v", result["evidence"])
 	}
 }
 
@@ -1360,6 +1462,24 @@ func TestSentryProviderOverridesErrorsCapability(t *testing.T) {
 	}
 	if metrics.Provider != "mock" {
 		t.Fatalf("expected metrics provider to remain mock, got %q", metrics.Provider)
+	}
+}
+
+func TestPrometheusProviderOverridesMetricsCapability(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(PrometheusProviderOverrides())
+	metrics, ok := registry.byID["metrics.get_service_health"]
+	if !ok {
+		t.Fatalf("expected metrics capability")
+	}
+	if metrics.Provider != PrometheusProvider {
+		t.Fatalf("expected prometheus provider, got %q", metrics.Provider)
+	}
+	errorsCapability, ok := registry.byID["errors.get_recent_errors"]
+	if !ok {
+		t.Fatalf("expected errors capability")
+	}
+	if errorsCapability.Provider != "mock" {
+		t.Fatalf("expected errors provider to remain mock, got %q", errorsCapability.Provider)
 	}
 }
 

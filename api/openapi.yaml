@@ -243,7 +243,7 @@ components:
           type: boolean
     ProviderConfig:
       type: object
-      required: [code_provider, deploy_provider, errors_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, store, ready, warnings]
+      required: [code_provider, deploy_provider, errors_provider, metrics_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, store, ready, warnings]
       properties:
         code_provider:
           type: string
@@ -254,6 +254,9 @@ components:
         errors_provider:
           type: string
           example: sentry
+        metrics_provider:
+          type: string
+          example: prometheus
         github_selected:
           type: boolean
         github_auth_mode:
@@ -275,6 +278,21 @@ components:
           type: boolean
         sentry_default_project_set:
           type: boolean
+        prometheus_selected:
+          type: boolean
+        prometheus_base_url_set:
+          type: boolean
+        prometheus_token_configured:
+          type: boolean
+        prometheus_service_label:
+          type: string
+          example: service
+        prometheus_environment_label:
+          type: string
+          example: environment
+        prometheus_status_label:
+          type: string
+          example: status
         demo_repository:
           type: string
           example: acme/backend

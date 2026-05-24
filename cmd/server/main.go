@@ -158,32 +158,42 @@ func providerConfigSummary(config Config) map[string]any {
 	codeProvider := providerOrMock(config.CodeProvider)
 	deployProvider := providerOrMock(config.DeployProvider)
 	errorsProvider := providerOrMock(config.ErrorsProvider)
+	metricsProvider := providerOrMock(config.MetricsProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
 	githubTokenConfigured := strings.TrimSpace(config.GitHubToken) != ""
 	githubAppAuthConfigured := githubAppConfigured(config)
 	githubConfigured := githubTokenConfigured || githubAppAuthConfigured
 	sentrySelected := errorsProvider == controlplane.SentryProvider
 	sentryConfigured := strings.TrimSpace(config.SentryAuthToken) != ""
+	prometheusSelected := metricsProvider == controlplane.PrometheusProvider
+	prometheusConfigured := strings.TrimSpace(config.PrometheusBaseURL) != ""
 	return map[string]any{
-		"code_provider":              codeProvider,
-		"deploy_provider":            deployProvider,
-		"errors_provider":            errorsProvider,
-		"github_selected":            githubSelected,
-		"github_auth_mode":           githubAuthMode(config),
-		"github_token_configured":    githubTokenConfigured,
-		"github_app_configured":      githubAppAuthConfigured,
-		"github_base_url_set":        strings.TrimSpace(config.GitHubBaseURL) != "",
-		"github_max_attempts":        githubMaxAttempts(config),
-		"github_retry_backoff_ms":    int(githubRetryBackoff(config) / time.Millisecond),
-		"sentry_selected":            sentrySelected,
-		"sentry_token_configured":    sentryConfigured,
-		"sentry_base_url_set":        strings.TrimSpace(config.SentryBaseURL) != "",
-		"sentry_default_org_set":     strings.TrimSpace(config.SentryOrg) != "",
-		"sentry_default_project_set": strings.TrimSpace(config.SentryProject) != "",
-		"demo_repository":            strings.TrimSpace(config.DemoRepository),
-		"store":                      providerStore(config),
-		"ready":                      (!githubSelected || githubConfigured) && (!sentrySelected || sentryConfigured),
-		"warnings":                   providerConfigBlockers(config),
+		"code_provider":                codeProvider,
+		"deploy_provider":              deployProvider,
+		"errors_provider":              errorsProvider,
+		"metrics_provider":             metricsProvider,
+		"github_selected":              githubSelected,
+		"github_auth_mode":             githubAuthMode(config),
+		"github_token_configured":      githubTokenConfigured,
+		"github_app_configured":        githubAppAuthConfigured,
+		"github_base_url_set":          strings.TrimSpace(config.GitHubBaseURL) != "",
+		"github_max_attempts":          githubMaxAttempts(config),
+		"github_retry_backoff_ms":      int(githubRetryBackoff(config) / time.Millisecond),
+		"sentry_selected":              sentrySelected,
+		"sentry_token_configured":      sentryConfigured,
+		"sentry_base_url_set":          strings.TrimSpace(config.SentryBaseURL) != "",
+		"sentry_default_org_set":       strings.TrimSpace(config.SentryOrg) != "",
+		"sentry_default_project_set":   strings.TrimSpace(config.SentryProject) != "",
+		"prometheus_selected":          prometheusSelected,
+		"prometheus_base_url_set":      prometheusConfigured,
+		"prometheus_token_configured":  strings.TrimSpace(config.PrometheusBearerToken) != "",
+		"prometheus_service_label":     firstConfiguredLabel(config.PrometheusServiceLabel, "service"),
+		"prometheus_environment_label": firstConfiguredLabel(config.PrometheusEnvLabel, "environment"),
+		"prometheus_status_label":      firstConfiguredLabel(config.PrometheusStatusLabel, "status"),
+		"demo_repository":              strings.TrimSpace(config.DemoRepository),
+		"store":                        providerStore(config),
+		"ready":                        (!githubSelected || githubConfigured) && (!sentrySelected || sentryConfigured) && (!prometheusSelected || prometheusConfigured),
+		"warnings":                     providerConfigBlockers(config),
 	}
 }
 
@@ -192,12 +202,16 @@ func providerConfigBlockers(config Config) []string {
 	codeProvider := providerOrMock(config.CodeProvider)
 	deployProvider := providerOrMock(config.DeployProvider)
 	errorsProvider := providerOrMock(config.ErrorsProvider)
+	metricsProvider := providerOrMock(config.MetricsProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
 	if githubSelected && !githubCredentialConfigured(config) {
 		blockers = append(blockers, "GITHUB_TOKEN or GitHub App installation credentials are required when a GitHub provider is selected.")
 	}
 	if errorsProvider == controlplane.SentryProvider && strings.TrimSpace(config.SentryAuthToken) == "" {
 		blockers = append(blockers, "SENTRY_AUTH_TOKEN is required when the Sentry errors provider is selected.")
+	}
+	if metricsProvider == controlplane.PrometheusProvider && strings.TrimSpace(config.PrometheusBaseURL) == "" {
+		blockers = append(blockers, "PROMETHEUS_BASE_URL is required when the Prometheus metrics provider is selected.")
 	}
 	return blockers
 }
@@ -313,6 +327,13 @@ func providerOrMock(provider string) string {
 		return "mock"
 	}
 	return provider
+}
+
+func firstConfiguredLabel(value string, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return fallback
 }
 
 func providerStore(config Config) string {

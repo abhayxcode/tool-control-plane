@@ -18,7 +18,7 @@ This repo now exposes the first real Tool Control Plane HTTP boundary for Majdoo
 
 v1 milestone checklist: [`docs/v1-milestone.md`](docs/v1-milestone.md)
 
-Tool execution is routed through provider adapters. Current built-in providers are `mock`, `github`, and `sentry`; future providers such as Grafana, Datadog, Kubernetes, and Jira should implement the same adapter boundary instead of changing policy or approval logic.
+Tool execution is routed through provider adapters. Current built-in providers are `mock`, `github`, `sentry`, and `prometheus`; future providers such as Datadog, Kubernetes, and Jira should implement the same adapter boundary instead of changing policy or approval logic.
 
 Audit and approval state is routed through a storage interface. The default implementation is in-memory. SQLite can be enabled for local durable dev mode; Postgres can be added behind the same store boundary later.
 
@@ -76,12 +76,21 @@ Sentry adapter:
 - optional `SENTRY_BASE_URL` supports self-hosted Sentry later
 - `errors.get_recent_errors` is implemented against the Sentry project issues API and returns normalized service status, top errors, evidence, and source URLs
 
+Prometheus adapter:
+
+- default behavior keeps metrics capabilities on `mock`
+- set `TOOL_CONTROL_PLANE_METRICS_PROVIDER=prometheus` to route `metrics.get_service_health` to the Prometheus adapter
+- set `PROMETHEUS_BASE_URL`, for example `http://localhost:9090`
+- optional `PROMETHEUS_BEARER_TOKEN` is sent as a bearer token for authenticated Prometheus-compatible gateways
+- optional `PROMETHEUS_SERVICE_LABEL`, `PROMETHEUS_ENVIRONMENT_LABEL`, and `PROMETHEUS_STATUS_LABEL` customize the default label matchers
+- `metrics.get_service_health` queries Prometheus instant queries for `up`, p95 latency, and error-rate signals, then returns normalized service status, thresholds, evidence, and source URLs
+
 Demo provider configs:
 
-- `examples/demo.mock.env` keeps all code, CI, and deployment calls on mock providers.
-- `examples/demo.github.env.example` documents the real GitHub and optional Sentry provider variables. Copy it to a private ignored file before adding credentials.
+- `examples/demo.mock.env` keeps all code, CI, deployment, errors, and metrics calls on mock providers.
+- `examples/demo.github.env.example` documents the real GitHub and optional Sentry/Prometheus provider variables. Copy it to a private ignored file before adding credentials.
 
-`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors providers, GitHub auth mode, whether token/App credentials are configured, Sentry readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
+`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors/metrics providers, GitHub auth mode, whether token/App credentials are configured, Sentry and Prometheus readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
 
 `GET /v1/readiness` returns the same non-secret provider readiness plus capability count, store/auth/rate-limit checks, optional demo repository access check, and blockers. Set `TOOL_CONTROL_PLANE_DEMO_REPOSITORY=owner/repo` to let readiness verify that the configured GitHub token/App can read the pushed demo repository. Majdoor uses this endpoint for demo and internal-alpha preflight.
 
@@ -204,6 +213,20 @@ The GitHub response includes normalized deployment `status`, workflow run `deplo
 
 The Sentry response includes normalized `status`, `top_errors`, `source_url`, and evidence. The adapter currently uses Sentry's documented project issues endpoint: `GET /api/0/projects/{organization_id_or_slug}/{project_id_or_slug}/issues/`.
 
+`metrics.get_service_health` accepts:
+
+- optional `service` or `service_id`, defaulting to the request `service_id`
+- optional `environment` or `env`, defaulting to the request `environment`
+- optional `window` or `range`, defaulting to `5m`
+- optional `service_label`, `environment_label`, and `status_label`
+- optional `request_metric`, defaulting to `http_requests_total`
+- optional `duration_bucket_metric`, defaulting to `http_request_duration_seconds_bucket`
+- optional `up_query`, `latency_p95_query`, and `error_rate_query` for full PromQL override
+- optional `latency_unit`, defaulting to seconds for p95 latency query output; set to `ms` when a custom query already returns milliseconds
+- optional `up_threshold`, `latency_p95_ms_threshold`, and `error_rate_percent_threshold`
+
+The Prometheus response includes normalized `status`, `up`, `latency_p95_ms`, `error_rate_percent`, query metadata, sample counts, thresholds, `source_url`, and evidence when data is available. The adapter uses Prometheus's stable HTTP API under `/api/v1`, specifically instant queries at `GET /api/v1/query`.
+
 Planned stack:
 
 - Go service
@@ -230,6 +253,7 @@ Configuration:
 - `TOOL_CONTROL_PLANE_CODE_PROVIDER`
 - `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER`
 - `TOOL_CONTROL_PLANE_ERRORS_PROVIDER`
+- `TOOL_CONTROL_PLANE_METRICS_PROVIDER`
 - `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS`
 - `TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF`
 - `GITHUB_TOKEN`
@@ -242,6 +266,11 @@ Configuration:
 - `SENTRY_ORG`
 - `SENTRY_PROJECT`
 - `SENTRY_BASE_URL`
+- `PROMETHEUS_BASE_URL`
+- `PROMETHEUS_BEARER_TOKEN`
+- `PROMETHEUS_SERVICE_LABEL`
+- `PROMETHEUS_ENVIRONMENT_LABEL`
+- `PROMETHEUS_STATUS_LABEL`
 
 ## APIs
 

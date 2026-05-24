@@ -70,8 +70,9 @@ func DefaultAdapterRegistry() AdapterRegistry {
 }
 
 type AdapterRegistryOptions struct {
-	GitHub *GitHubAdapterConfig
-	Sentry *SentryAdapterConfig
+	GitHub     *GitHubAdapterConfig
+	Sentry     *SentryAdapterConfig
+	Prometheus *PrometheusAdapterConfig
 }
 
 func DefaultAdapterRegistryWithOptions(options AdapterRegistryOptions) AdapterRegistry {
@@ -83,6 +84,9 @@ func DefaultAdapterRegistryWithOptions(options AdapterRegistryOptions) AdapterRe
 	}
 	if options.Sentry != nil {
 		adapters[SentryProvider] = NewSentryAdapter(*options.Sentry)
+	}
+	if options.Prometheus != nil {
+		adapters[PrometheusProvider] = NewPrometheusAdapter(*options.Prometheus)
 	}
 	return NewAdapterRegistry(adapters)
 }

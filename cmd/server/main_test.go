@@ -180,6 +180,32 @@ func TestNewServiceFromEnvCanRouteErrorCapabilitiesToSentry(t *testing.T) {
 	}
 }
 
+func TestNewServiceFromEnvCanRouteMetricsCapabilitiesToPrometheus(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		MetricsProvider:   controlplane.PrometheusProvider,
+		PrometheusBaseURL: "http://prometheus.local",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	var foundPrometheusMetrics bool
+	var foundMockErrors bool
+	for _, detail := range svc.CapabilityDetails() {
+		if detail.ID == "metrics.get_service_health" && detail.Provider == controlplane.PrometheusProvider {
+			foundPrometheusMetrics = true
+		}
+		if detail.ID == "errors.get_recent_errors" && detail.Provider == "mock" {
+			foundMockErrors = true
+		}
+	}
+	if !foundPrometheusMetrics {
+		t.Fatalf("expected metrics.get_service_health to use prometheus provider")
+	}
+	if !foundMockErrors {
+		t.Fatalf("expected errors.get_recent_errors to remain mock provider")
+	}
+}
+
 func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_ADDR", ":4200")
 	t.Setenv("TOOL_CONTROL_PLANE_API_TOKEN", "secret-token")
@@ -190,6 +216,7 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_CODE_PROVIDER", "github")
 	t.Setenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER", "github")
 	t.Setenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER", "sentry")
+	t.Setenv("TOOL_CONTROL_PLANE_METRICS_PROVIDER", "prometheus")
 	t.Setenv("GITHUB_TOKEN", "github-token")
 	t.Setenv("GITHUB_APP_ID", "12345")
 	t.Setenv("GITHUB_APP_INSTALLATION_ID", "42")
@@ -201,6 +228,11 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("SENTRY_ORG", "acme")
 	t.Setenv("SENTRY_PROJECT", "backend")
 	t.Setenv("SENTRY_BASE_URL", "https://sentry.example")
+	t.Setenv("PROMETHEUS_BASE_URL", "https://prometheus.example")
+	t.Setenv("PROMETHEUS_BEARER_TOKEN", "prometheus-token")
+	t.Setenv("PROMETHEUS_SERVICE_LABEL", "app")
+	t.Setenv("PROMETHEUS_ENVIRONMENT_LABEL", "env")
+	t.Setenv("PROMETHEUS_STATUS_LABEL", "code")
 	t.Setenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY", "acme/backend")
 
 	config, err := configFromEnv()
@@ -222,11 +254,14 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
 		t.Fatalf("unexpected store config")
 	}
-	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
+	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.MetricsProvider != "prometheus" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
 	}
 	if config.SentryAuthToken != "sentry-token" || config.SentryOrg != "acme" || config.SentryProject != "backend" || config.SentryBaseURL != "https://sentry.example" {
 		t.Fatalf("unexpected Sentry config")
+	}
+	if config.PrometheusBaseURL != "https://prometheus.example" || config.PrometheusBearerToken != "prometheus-token" || config.PrometheusServiceLabel != "app" || config.PrometheusEnvLabel != "env" || config.PrometheusStatusLabel != "code" {
+		t.Fatalf("unexpected Prometheus config")
 	}
 	if config.GitHubAppID != "12345" || config.GitHubAppInstallationID != "42" || config.GitHubAppPrivateKey != "line1\nline2" {
 		t.Fatalf("unexpected GitHub App config")
@@ -304,6 +339,9 @@ func TestCapabilitiesExposeProviderConfigReadiness(t *testing.T) {
 	if body.ProviderConfig["errors_provider"] != "mock" {
 		t.Fatalf("expected mock errors provider, got %#v", body.ProviderConfig["errors_provider"])
 	}
+	if body.ProviderConfig["metrics_provider"] != "mock" {
+		t.Fatalf("expected mock metrics provider, got %#v", body.ProviderConfig["metrics_provider"])
+	}
 	if body.ProviderConfig["github_token_configured"] != true {
 		t.Fatalf("expected configured github token")
 	}
@@ -356,6 +394,54 @@ func TestCapabilitiesExposeSentryProviderConfigReadiness(t *testing.T) {
 	}
 	if body.ProviderConfig["sentry_default_org_set"] != true || body.ProviderConfig["sentry_default_project_set"] != true {
 		t.Fatalf("expected sentry defaults configured, got %#v", body.ProviderConfig)
+	}
+	if body.ProviderConfig["ready"] != true {
+		t.Fatalf("expected provider config ready")
+	}
+}
+
+func TestCapabilitiesExposePrometheusProviderConfigReadiness(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		MetricsProvider:        controlplane.PrometheusProvider,
+		PrometheusBaseURL:      "http://prometheus.local",
+		PrometheusBearerToken:  "prom-token",
+		PrometheusServiceLabel: "app",
+		PrometheusEnvLabel:     "env",
+		PrometheusStatusLabel:  "code",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	mux := newMux(svc, Config{
+		MetricsProvider:        controlplane.PrometheusProvider,
+		PrometheusBaseURL:      "http://prometheus.local",
+		PrometheusBearerToken:  "prom-token",
+		PrometheusServiceLabel: "app",
+		PrometheusEnvLabel:     "env",
+		PrometheusStatusLabel:  "code",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig map[string]any `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig["metrics_provider"] != controlplane.PrometheusProvider {
+		t.Fatalf("expected prometheus metrics provider, got %#v", body.ProviderConfig["metrics_provider"])
+	}
+	if body.ProviderConfig["prometheus_selected"] != true || body.ProviderConfig["prometheus_base_url_set"] != true || body.ProviderConfig["prometheus_token_configured"] != true {
+		t.Fatalf("expected prometheus selected and configured, got %#v", body.ProviderConfig)
+	}
+	if body.ProviderConfig["prometheus_service_label"] != "app" || body.ProviderConfig["prometheus_environment_label"] != "env" || body.ProviderConfig["prometheus_status_label"] != "code" {
+		t.Fatalf("unexpected prometheus labels: %#v", body.ProviderConfig)
 	}
 	if body.ProviderConfig["ready"] != true {
 		t.Fatalf("expected provider config ready")
@@ -429,6 +515,35 @@ func TestCapabilitiesExposeMissingGitHubTokenWarning(t *testing.T) {
 func TestCapabilitiesExposeMissingSentryTokenWarning(t *testing.T) {
 	mux := newMux(controlplane.NewService(), Config{
 		ErrorsProvider: controlplane.SentryProvider,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig struct {
+			Ready    bool     `json:"ready"`
+			Warnings []string `json:"warnings"`
+		} `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig.Ready {
+		t.Fatalf("expected provider config not ready")
+	}
+	if len(body.ProviderConfig.Warnings) != 1 {
+		t.Fatalf("expected one warning, got %d", len(body.ProviderConfig.Warnings))
+	}
+}
+
+func TestCapabilitiesExposeMissingPrometheusBaseURLWarning(t *testing.T) {
+	mux := newMux(controlplane.NewService(), Config{
+		MetricsProvider: controlplane.PrometheusProvider,
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
 	resp := httptest.NewRecorder()

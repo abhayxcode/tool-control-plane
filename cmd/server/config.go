@@ -21,6 +21,7 @@ type Config struct {
 	CodeProvider            string
 	DeployProvider          string
 	ErrorsProvider          string
+	MetricsProvider         string
 	GitHubToken             string
 	GitHubAppID             string
 	GitHubAppInstallationID string
@@ -33,6 +34,11 @@ type Config struct {
 	SentryOrg               string
 	SentryProject           string
 	SentryBaseURL           string
+	PrometheusBaseURL       string
+	PrometheusBearerToken   string
+	PrometheusServiceLabel  string
+	PrometheusEnvLabel      string
+	PrometheusStatusLabel   string
 	DemoRepository          string
 }
 
@@ -46,6 +52,7 @@ func configFromEnv() (Config, error) {
 		CodeProvider:            os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
 		DeployProvider:          os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
 		ErrorsProvider:          os.Getenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER"),
+		MetricsProvider:         os.Getenv("TOOL_CONTROL_PLANE_METRICS_PROVIDER"),
 		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
 		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
 		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),
@@ -56,6 +63,11 @@ func configFromEnv() (Config, error) {
 		SentryOrg:               os.Getenv("SENTRY_ORG"),
 		SentryProject:           os.Getenv("SENTRY_PROJECT"),
 		SentryBaseURL:           os.Getenv("SENTRY_BASE_URL"),
+		PrometheusBaseURL:       os.Getenv("PROMETHEUS_BASE_URL"),
+		PrometheusBearerToken:   os.Getenv("PROMETHEUS_BEARER_TOKEN"),
+		PrometheusServiceLabel:  os.Getenv("PROMETHEUS_SERVICE_LABEL"),
+		PrometheusEnvLabel:      os.Getenv("PROMETHEUS_ENVIRONMENT_LABEL"),
+		PrometheusStatusLabel:   os.Getenv("PROMETHEUS_STATUS_LABEL"),
 		DemoRepository:          os.Getenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY"),
 	}
 	rawShutdownTimeout := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT"))
@@ -99,6 +111,7 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 	store := controlplane.Store(controlplane.NewMemoryStore())
 	var githubConfig *controlplane.GitHubAdapterConfig
 	var sentryConfig *controlplane.SentryAdapterConfig
+	var prometheusConfig *controlplane.PrometheusAdapterConfig
 	overrides := map[string]string{}
 	if config.CodeProvider == controlplane.GitHubProvider || config.DeployProvider == controlplane.GitHubProvider {
 		if config.CodeProvider == controlplane.GitHubProvider {
@@ -134,11 +147,24 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 			BaseURL: config.SentryBaseURL,
 		}
 	}
+	if config.MetricsProvider == controlplane.PrometheusProvider {
+		for id, provider := range controlplane.PrometheusProviderOverrides() {
+			overrides[id] = provider
+		}
+		prometheusConfig = &controlplane.PrometheusAdapterConfig{
+			BaseURL:          config.PrometheusBaseURL,
+			BearerToken:      config.PrometheusBearerToken,
+			ServiceLabel:     config.PrometheusServiceLabel,
+			EnvironmentLabel: config.PrometheusEnvLabel,
+			StatusLabel:      config.PrometheusStatusLabel,
+		}
+	}
 	if len(overrides) > 0 {
 		registry = registry.WithProviderOverrides(overrides)
 		adapters = controlplane.DefaultAdapterRegistryWithOptions(controlplane.AdapterRegistryOptions{
-			GitHub: githubConfig,
-			Sentry: sentryConfig,
+			GitHub:     githubConfig,
+			Sentry:     sentryConfig,
+			Prometheus: prometheusConfig,
 		})
 	}
 	if config.Store == "sqlite" || config.SQLitePath != "" {
