@@ -1,6 +1,9 @@
 package controlplane
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type ToolCallRequest struct {
 	RequestID   string         `json:"request_id,omitempty"`
@@ -15,14 +18,23 @@ type ToolCallRequest struct {
 }
 
 type ToolCallResponse struct {
-	Status            string         `json:"status"`
-	RiskLevel         string         `json:"risk_level"`
-	Provider          string         `json:"provider,omitempty"`
-	Result            map[string]any `json:"result,omitempty"`
-	Reason            string         `json:"reason,omitempty"`
-	Error             *ToolCallError `json:"error,omitempty"`
-	ApprovalRequired  bool           `json:"approval_required,omitempty"`
-	ApprovalRequestID string         `json:"approval_request_id,omitempty"`
+	Status            string              `json:"status"`
+	RiskLevel         string              `json:"risk_level"`
+	Provider          string              `json:"provider,omitempty"`
+	RouteTrace        *ProviderRouteTrace `json:"route_trace,omitempty"`
+	Result            map[string]any      `json:"result,omitempty"`
+	Reason            string              `json:"reason,omitempty"`
+	Error             *ToolCallError      `json:"error,omitempty"`
+	ApprovalRequired  bool                `json:"approval_required,omitempty"`
+	ApprovalRequestID string              `json:"approval_request_id,omitempty"`
+}
+
+type ProviderRouteTrace struct {
+	CapabilityID             string   `json:"capability_id"`
+	SelectedProvider         string   `json:"selected_provider"`
+	SelectedAdapterAvailable bool     `json:"selected_adapter_available"`
+	AlternativeProviders     []string `json:"alternative_providers,omitempty"`
+	Reason                   string   `json:"reason"`
 }
 
 type ToolCallError struct {
@@ -36,25 +48,26 @@ type ToolCallError struct {
 }
 
 type ToolCallRecord struct {
-	ID                string         `json:"id"`
-	At                string         `json:"at"`
-	RequestID         string         `json:"request_id,omitempty"`
-	OrgID             string         `json:"org_id"`
-	ActorUserID       string         `json:"actor_user_id"`
-	AgentRunID        string         `json:"agent_run_id"`
-	ServiceID         string         `json:"service_id"`
-	Environment       string         `json:"environment"`
-	Capability        string         `json:"capability"`
-	Action            string         `json:"action"`
-	Arguments         map[string]any `json:"arguments,omitempty"`
-	RiskLevel         string         `json:"risk_level"`
-	Decision          string         `json:"decision"`
-	Provider          string         `json:"provider,omitempty"`
-	Status            string         `json:"status"`
-	Reason            string         `json:"reason,omitempty"`
-	Error             *ToolCallError `json:"error,omitempty"`
-	ApprovalRequestID string         `json:"approval_request_id,omitempty"`
-	Result            map[string]any `json:"result,omitempty"`
+	ID                string              `json:"id"`
+	At                string              `json:"at"`
+	RequestID         string              `json:"request_id,omitempty"`
+	OrgID             string              `json:"org_id"`
+	ActorUserID       string              `json:"actor_user_id"`
+	AgentRunID        string              `json:"agent_run_id"`
+	ServiceID         string              `json:"service_id"`
+	Environment       string              `json:"environment"`
+	Capability        string              `json:"capability"`
+	Action            string              `json:"action"`
+	Arguments         map[string]any      `json:"arguments,omitempty"`
+	RiskLevel         string              `json:"risk_level"`
+	Decision          string              `json:"decision"`
+	Provider          string              `json:"provider,omitempty"`
+	RouteTrace        *ProviderRouteTrace `json:"route_trace,omitempty"`
+	Status            string              `json:"status"`
+	Reason            string              `json:"reason,omitempty"`
+	Error             *ToolCallError      `json:"error,omitempty"`
+	ApprovalRequestID string              `json:"approval_request_id,omitempty"`
+	Result            map[string]any      `json:"result,omitempty"`
 }
 
 type AuditEntry struct {
@@ -144,9 +157,11 @@ func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 		if err := s.validator.Validate(req, decision.Capability); err != nil {
 			s.appendAudit(req, decision.RiskLevel, DecisionInvalid, "")
 			response := ToolCallResponse{
-				Status:    DecisionInvalid,
-				RiskLevel: decision.RiskLevel,
-				Reason:    err.Error(),
+				Status:     DecisionInvalid,
+				RiskLevel:  decision.RiskLevel,
+				Provider:   decision.Capability.Provider,
+				RouteTrace: s.providerRouteTrace(decision.Capability),
+				Reason:     err.Error(),
 			}
 			s.appendToolCall(req, decision.RiskLevel, DecisionInvalid, "", response)
 			return response
@@ -162,6 +177,8 @@ func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 		response := ToolCallResponse{
 			Status:            decision.Decision,
 			RiskLevel:         decision.RiskLevel,
+			Provider:          decision.Capability.Provider,
+			RouteTrace:        s.providerRouteTrace(decision.Capability),
 			Reason:            decision.Reason,
 			ApprovalRequired:  decision.ApprovalRequired,
 			ApprovalRequestID: approvalRequestID,
@@ -178,7 +195,9 @@ func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 
 func (s *Service) executeAllowedTool(req ToolCallRequest, definition CapabilityDefinition, riskLevel string) ToolCallResponse {
 	definition.RiskLevel = riskLevel
-	return s.adapters.Execute(definition, req)
+	response := s.adapters.Execute(definition, req)
+	response.RouteTrace = s.providerRouteTrace(definition)
+	return response
 }
 
 func (s *Service) executeApprovedTool(req ToolCallRequest, approvalID string) ToolCallResponse {
@@ -196,6 +215,7 @@ func (s *Service) executeApprovedTool(req ToolCallRequest, approvalID string) To
 	}
 	definition.RiskLevel = riskLevel
 	response := s.adapters.Execute(definition, req)
+	response.RouteTrace = s.providerRouteTrace(definition)
 	s.appendToolCall(req, riskLevel, DecisionApprovedExecuted, approvalID, response)
 	if response.Status != "success" {
 		return response
@@ -378,10 +398,47 @@ func (s *Service) appendToolCall(req ToolCallRequest, riskLevel string, decision
 		RiskLevel:         riskLevel,
 		Decision:          decision,
 		Provider:          response.Provider,
+		RouteTrace:        cloneProviderRouteTrace(response.RouteTrace),
 		Status:            response.Status,
 		Reason:            response.Reason,
 		Error:             response.Error,
 		ApprovalRequestID: firstNonEmptyToolCallValue(approvalRequestID, response.ApprovalRequestID),
 		Result:            redactToolCallMap(response.Result),
 	})
+}
+
+func (s *Service) providerRouteTrace(definition CapabilityDefinition) *ProviderRouteTrace {
+	if definition.ID == "" {
+		return nil
+	}
+	providers := s.adapters.Providers()
+	alternatives := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		if provider != definition.Provider {
+			alternatives = append(alternatives, provider)
+		}
+	}
+	adapterAvailable := s.adapters.HasProvider(definition.Provider)
+	reason := fmt.Sprintf("Capability %s is registered with provider %s.", definition.ID, definition.Provider)
+	if !adapterAvailable {
+		reason = fmt.Sprintf("Capability %s selected provider %s, but no adapter is registered for that provider.", definition.ID, definition.Provider)
+	}
+	return &ProviderRouteTrace{
+		CapabilityID:             definition.ID,
+		SelectedProvider:         definition.Provider,
+		SelectedAdapterAvailable: adapterAvailable,
+		AlternativeProviders:     alternatives,
+		Reason:                   reason,
+	}
+}
+
+func cloneProviderRouteTrace(trace *ProviderRouteTrace) *ProviderRouteTrace {
+	if trace == nil {
+		return nil
+	}
+	clone := *trace
+	if trace.AlternativeProviders != nil {
+		clone.AlternativeProviders = append([]string{}, trace.AlternativeProviders...)
+	}
+	return &clone
 }

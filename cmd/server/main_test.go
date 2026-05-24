@@ -146,6 +146,9 @@ func TestToolCallRecordHTTPFlow(t *testing.T) {
 	if record.Arguments["token"] != "[redacted]" {
 		t.Fatalf("expected redacted token in tool call record")
 	}
+	if record.RouteTrace == nil || record.RouteTrace.SelectedProvider != "mock" || record.RouteTrace.CapabilityID != "metrics.get_service_health" {
+		t.Fatalf("expected route trace in tool call record, got %#v", record.RouteTrace)
+	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/v1/tool-calls/"+record.ID, nil)
 	getResp := httptest.NewRecorder()
@@ -159,6 +162,9 @@ func TestToolCallRecordHTTPFlow(t *testing.T) {
 	}
 	if getResult.ID != record.ID || getResult.Status != "success" {
 		t.Fatalf("unexpected tool call record: %#v", getResult)
+	}
+	if getResult.RouteTrace == nil || !getResult.RouteTrace.SelectedAdapterAvailable {
+		t.Fatalf("expected route trace in direct lookup")
 	}
 
 	missingReq := httptest.NewRequest(http.MethodGet, "/v1/tool-calls/missing", nil)
@@ -188,6 +194,9 @@ func TestToolCallRecordHTTPFlow(t *testing.T) {
 	}
 	if len(exportResult.Audit) != 1 || len(exportResult.ToolCalls) != 1 {
 		t.Fatalf("expected audit and tool calls in export")
+	}
+	if exportResult.ToolCalls[0].RouteTrace == nil {
+		t.Fatalf("expected route trace in audit export")
 	}
 	if len(exportResult.Approvals) != 0 {
 		t.Fatalf("expected no approvals for read tool call")

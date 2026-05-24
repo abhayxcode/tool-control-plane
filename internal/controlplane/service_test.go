@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+type routeTraceAdapter struct{}
+
+func (routeTraceAdapter) Execute(definition CapabilityDefinition, req ToolCallRequest) (map[string]any, error) {
+	return map[string]any{
+		"capability_id": definition.ID,
+		"service_id":    req.ServiceID,
+	}, nil
+}
+
 func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	svc := NewService()
 	capabilities := svc.Capabilities()
@@ -74,6 +83,88 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	}
 	if !foundReadyForReview {
 		t.Fatalf("expected mark ready for review capability metadata")
+	}
+}
+
+func TestCallToolIncludesProviderRouteTrace(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(map[string]string{
+		"metrics.get_service_health": "custom_metrics",
+	})
+	svc := NewServiceWithOptions(ServiceOptions{
+		Registry: registry,
+		Adapters: NewAdapterRegistry(map[string]ToolAdapter{
+			"custom_metrics": routeTraceAdapter{},
+			"mock":           NewMockAdapter(nil),
+		}),
+	})
+
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "metrics",
+		Action:      "get_service_health",
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %#v", result)
+	}
+	if result.RouteTrace == nil {
+		t.Fatalf("expected route trace")
+	}
+	if result.RouteTrace.CapabilityID != "metrics.get_service_health" || result.RouteTrace.SelectedProvider != "custom_metrics" {
+		t.Fatalf("unexpected route trace: %#v", result.RouteTrace)
+	}
+	if !result.RouteTrace.SelectedAdapterAvailable {
+		t.Fatalf("expected selected adapter available")
+	}
+	if len(result.RouteTrace.AlternativeProviders) != 1 || result.RouteTrace.AlternativeProviders[0] != "mock" {
+		t.Fatalf("unexpected alternative providers: %#v", result.RouteTrace.AlternativeProviders)
+	}
+	if !strings.Contains(result.RouteTrace.Reason, "custom_metrics") {
+		t.Fatalf("expected routing reason to mention selected provider: %q", result.RouteTrace.Reason)
+	}
+
+	records := svc.ToolCalls()
+	if len(records) != 1 || records[0].RouteTrace == nil {
+		t.Fatalf("expected stored route trace")
+	}
+	if records[0].RouteTrace.SelectedProvider != "custom_metrics" {
+		t.Fatalf("unexpected stored route trace: %#v", records[0].RouteTrace)
+	}
+}
+
+func TestCallToolIncludesRouteTraceForMissingAdapter(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(map[string]string{
+		"metrics.get_service_health": "missing_metrics",
+	})
+	svc := NewServiceWithOptions(ServiceOptions{
+		Registry: registry,
+		Adapters: NewAdapterRegistry(map[string]ToolAdapter{
+			"mock": NewMockAdapter(nil),
+		}),
+	})
+
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "metrics",
+		Action:      "get_service_health",
+	})
+
+	if result.Status != "error" {
+		t.Fatalf("expected missing adapter error, got %#v", result)
+	}
+	if result.RouteTrace == nil || result.RouteTrace.SelectedAdapterAvailable {
+		t.Fatalf("expected unavailable adapter route trace, got %#v", result.RouteTrace)
+	}
+	if result.RouteTrace.SelectedProvider != "missing_metrics" {
+		t.Fatalf("unexpected selected provider: %#v", result.RouteTrace)
 	}
 }
 

@@ -35,6 +35,7 @@ func TestOpenAPISpecDocumentsHTTPRoutes(t *testing.T) {
 		"ToolCallRequest:",
 		"ToolCallResponse:",
 		"ToolCallRecord:",
+		"ProviderRouteTrace:",
 		"Connector:",
 		"ConnectorCreateRequest:",
 		"PolicyListResponse:",

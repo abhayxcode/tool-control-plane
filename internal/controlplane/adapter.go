@@ -3,6 +3,7 @@ package controlplane
 import (
 	"errors"
 	"fmt"
+	"sort"
 )
 
 type ToolAdapter interface {
@@ -25,12 +26,27 @@ func NewAdapterRegistry(adapters map[string]ToolAdapter) AdapterRegistry {
 	return AdapterRegistry{byProvider: byProvider}
 }
 
+func (r AdapterRegistry) Providers() []string {
+	providers := make([]string, 0, len(r.byProvider))
+	for provider := range r.byProvider {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	return providers
+}
+
+func (r AdapterRegistry) HasProvider(provider string) bool {
+	_, ok := r.byProvider[provider]
+	return ok
+}
+
 func (r AdapterRegistry) Execute(definition CapabilityDefinition, req ToolCallRequest) ToolCallResponse {
 	adapter, ok := r.byProvider[definition.Provider]
 	if !ok {
 		return ToolCallResponse{
 			Status:    "error",
 			RiskLevel: definition.RiskLevel,
+			Provider:  definition.Provider,
 			Reason:    fmt.Sprintf("No adapter registered for provider '%s'.", definition.Provider),
 		}
 	}

@@ -46,6 +46,24 @@ func TestAdapterRegistryExecutesProviderAdapter(t *testing.T) {
 	}
 }
 
+func TestAdapterRegistryExposesConfiguredProviders(t *testing.T) {
+	registry := NewAdapterRegistry(map[string]ToolAdapter{
+		"zeta": NewMockAdapter(nil),
+		"mock": NewMockAdapter(nil),
+	})
+
+	providers := registry.Providers()
+	if len(providers) != 2 || providers[0] != "mock" || providers[1] != "zeta" {
+		t.Fatalf("expected sorted providers, got %#v", providers)
+	}
+	if !registry.HasProvider("mock") {
+		t.Fatalf("expected mock provider")
+	}
+	if registry.HasProvider("missing") {
+		t.Fatalf("expected missing provider to be unavailable")
+	}
+}
+
 func TestAdapterRegistryReturnsErrorForMissingProvider(t *testing.T) {
 	registry := NewAdapterRegistry(map[string]ToolAdapter{})
 	response := registry.Execute(CapabilityDefinition{
@@ -59,6 +77,9 @@ func TestAdapterRegistryReturnsErrorForMissingProvider(t *testing.T) {
 	}
 	if response.Reason == "" {
 		t.Fatalf("expected error reason")
+	}
+	if response.Provider != "missing" {
+		t.Fatalf("expected missing provider to be reported")
 	}
 }
 

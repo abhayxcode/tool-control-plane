@@ -98,14 +98,15 @@ func (s *SQLiteStore) AppendToolCall(record ToolCallRecord) ToolCallRecord {
 	argsJSON := mustMarshalArgs(record.Arguments)
 	resultJSON := mustMarshalArgs(record.Result)
 	errorJSON := mustMarshalToolCallError(record.Error)
+	routeTraceJSON := mustMarshalProviderRouteTrace(record.RouteTrace)
 
 	_, err = tx.Exec(`
 		INSERT INTO tool_calls (
 			id, seq, at, request_id, org_id, actor_user_id, agent_run_id,
 			service_id, environment, capability, action, arguments_json,
 			risk_level, decision, provider, status, reason, error_json,
-			approval_request_id, result_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			route_trace_json, approval_request_id, result_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.ID,
 		seq,
 		record.At,
@@ -124,6 +125,7 @@ func (s *SQLiteStore) AppendToolCall(record ToolCallRecord) ToolCallRecord {
 		record.Status,
 		record.Reason,
 		errorJSON,
+		routeTraceJSON,
 		record.ApprovalRequestID,
 		resultJSON,
 	)
@@ -137,7 +139,7 @@ func (s *SQLiteStore) ToolCalls() []ToolCallRecord {
 		SELECT id, at, request_id, org_id, actor_user_id, agent_run_id,
 			service_id, environment, capability, action, arguments_json,
 			risk_level, decision, provider, status, reason, error_json,
-			approval_request_id, result_json
+			route_trace_json, approval_request_id, result_json
 		FROM tool_calls
 		ORDER BY seq ASC`)
 	panicOnStoreError(err)
@@ -159,7 +161,7 @@ func (s *SQLiteStore) ToolCall(id string) (ToolCallRecord, bool) {
 		SELECT id, at, request_id, org_id, actor_user_id, agent_run_id,
 			service_id, environment, capability, action, arguments_json,
 			risk_level, decision, provider, status, reason, error_json,
-			approval_request_id, result_json
+			route_trace_json, approval_request_id, result_json
 		FROM tool_calls
 		WHERE id = ?`, id)
 	return scanToolCall(row)
@@ -382,6 +384,7 @@ func (s *SQLiteStore) migrate() error {
 			status TEXT NOT NULL,
 			reason TEXT NOT NULL DEFAULT '',
 			error_json TEXT NOT NULL DEFAULT '',
+			route_trace_json TEXT NOT NULL DEFAULT '',
 			approval_request_id TEXT NOT NULL DEFAULT '',
 			result_json TEXT NOT NULL DEFAULT '{}'
 		);
@@ -423,7 +426,10 @@ func (s *SQLiteStore) migrate() error {
 			executed_at TEXT NOT NULL DEFAULT ''
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.ensureColumn("tool_calls", "route_trace_json", "TEXT NOT NULL DEFAULT ''")
 }
 
 type approvalScanner interface {
@@ -468,6 +474,7 @@ func scanToolCall(scanner approvalScanner) (ToolCallRecord, bool) {
 	var argsJSON string
 	var resultJSON string
 	var errorJSON string
+	var routeTraceJSON string
 	err := scanner.Scan(
 		&record.ID,
 		&record.At,
@@ -486,6 +493,7 @@ func scanToolCall(scanner approvalScanner) (ToolCallRecord, bool) {
 		&record.Status,
 		&record.Reason,
 		&errorJSON,
+		&routeTraceJSON,
 		&record.ApprovalRequestID,
 		&resultJSON,
 	)
@@ -496,6 +504,7 @@ func scanToolCall(scanner approvalScanner) (ToolCallRecord, bool) {
 	record.Arguments = mustUnmarshalArgs(argsJSON)
 	record.Result = mustUnmarshalArgs(resultJSON)
 	record.Error = mustUnmarshalToolCallError(errorJSON)
+	record.RouteTrace = mustUnmarshalProviderRouteTrace(routeTraceJSON)
 	return record, true
 }
 
@@ -541,6 +550,15 @@ func mustMarshalToolCallError(value *ToolCallError) string {
 	return string(result)
 }
 
+func mustMarshalProviderRouteTrace(value *ProviderRouteTrace) string {
+	if value == nil {
+		return ""
+	}
+	result, err := json.Marshal(value)
+	panicOnStoreError(err)
+	return string(result)
+}
+
 func mustUnmarshalArgs(value string) map[string]any {
 	if value == "" {
 		return map[string]any{}
@@ -562,6 +580,43 @@ func mustUnmarshalToolCallError(value string) *ToolCallError {
 	err := json.Unmarshal([]byte(value), &result)
 	panicOnStoreError(err)
 	return &result
+}
+
+func mustUnmarshalProviderRouteTrace(value string) *ProviderRouteTrace {
+	if value == "" {
+		return nil
+	}
+	var result ProviderRouteTrace
+	err := json.Unmarshal([]byte(value), &result)
+	panicOnStoreError(err)
+	return &result
+}
+
+func (s *SQLiteStore) ensureColumn(table string, name string, definition string) error {
+	rows, err := s.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var columnName string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKey int
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if columnName == name {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + definition)
+	return err
 }
 
 func boolToInt(value bool) int {

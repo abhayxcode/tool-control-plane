@@ -50,7 +50,8 @@ Request tracing:
 - callers can supply `X-Request-ID`; otherwise the server generates one
 - access logs are emitted as JSON lines with method, path, status, duration, and request ID
 - tool-call audit entries include `request_id`
-- stored tool-call records include `request_id`, redacted arguments, and redacted results
+- tool-call responses and stored records include `route_trace` with selected provider, adapter availability, alternate configured providers, and routing reason
+- stored tool-call records include `request_id`, redacted arguments, redacted results, provider errors, and route traces
 
 Rate limiting:
 

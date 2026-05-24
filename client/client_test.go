@@ -85,6 +85,9 @@ func TestClientCallsToolAndApprovalLifecycle(t *testing.T) {
 	if toolCall.Status != "approval_required" {
 		t.Fatalf("expected approval required, got %q", toolCall.Status)
 	}
+	if toolCall.RouteTrace == nil || toolCall.RouteTrace.SelectedProvider != "mock" {
+		t.Fatalf("expected route trace on tool call response")
+	}
 
 	approval, err := tcp.Approval(ctx, toolCall.ApprovalRequestID)
 	if err != nil {
@@ -130,6 +133,9 @@ func TestClientCallsToolAndApprovalLifecycle(t *testing.T) {
 	}
 	if toolCalls[0].Arguments["token"] != "[redacted]" {
 		t.Fatalf("expected redacted token")
+	}
+	if toolCalls[0].RouteTrace == nil || toolCalls[0].RouteTrace.CapabilityID != "deploy.rollback" {
+		t.Fatalf("expected route trace on tool call record")
 	}
 	toolRecord, err := tcp.ToolCall(ctx, toolCalls[0].ID)
 	if err != nil {
@@ -252,8 +258,15 @@ func testMux() *http.ServeMux {
 			"target_revision": "sha-abc123",
 			"token":           "[redacted]",
 		},
-		RiskLevel:         "write_high",
-		Decision:          "approval_required",
+		RiskLevel: "write_high",
+		Decision:  "approval_required",
+		Provider:  "mock",
+		RouteTrace: &ProviderRouteTrace{
+			CapabilityID:             "deploy.rollback",
+			SelectedProvider:         "mock",
+			SelectedAdapterAvailable: true,
+			Reason:                   "Capability deploy.rollback is registered with provider mock.",
+		},
 		Status:            "approval_required",
 		Reason:            "Tool action requires approval before execution.",
 		ApprovalRequestID: approval.ID,
@@ -316,8 +329,15 @@ func testMux() *http.ServeMux {
 	})
 	mux.HandleFunc("POST /v1/tool-calls", func(w http.ResponseWriter, r *http.Request) {
 		writeTestJSON(w, ToolCallResponse{
-			Status:            "approval_required",
-			RiskLevel:         "write_high",
+			Status:    "approval_required",
+			RiskLevel: "write_high",
+			Provider:  "mock",
+			RouteTrace: &ProviderRouteTrace{
+				CapabilityID:             "deploy.rollback",
+				SelectedProvider:         "mock",
+				SelectedAdapterAvailable: true,
+				Reason:                   "Capability deploy.rollback is registered with provider mock.",
+			},
 			Reason:            "Tool action requires approval before execution.",
 			ApprovalRequired:  true,
 			ApprovalRequestID: approval.ID,

@@ -130,7 +130,14 @@ func TestSQLiteStorePersistsToolCalls(t *testing.T) {
 		RiskLevel: RiskRead,
 		Decision:  DecisionAllowed,
 		Provider:  "mock",
-		Status:    "success",
+		RouteTrace: &ProviderRouteTrace{
+			CapabilityID:             "metrics.get_service_health",
+			SelectedProvider:         "mock",
+			SelectedAdapterAvailable: true,
+			AlternativeProviders:     []string{"github"},
+			Reason:                   "Capability metrics.get_service_health is registered with provider mock.",
+		},
+		Status: "success",
 		Result: map[string]any{
 			"status": "degraded",
 		},
@@ -165,6 +172,9 @@ func TestSQLiteStorePersistsToolCalls(t *testing.T) {
 	if records[0].Result["status"] != "degraded" {
 		t.Fatalf("expected persisted tool call result")
 	}
+	if records[0].RouteTrace == nil || records[0].RouteTrace.SelectedProvider != "mock" || len(records[0].RouteTrace.AlternativeProviders) != 1 {
+		t.Fatalf("expected persisted route trace, got %#v", records[0].RouteTrace)
+	}
 	if records[0].Error == nil || !records[0].Error.Retryable {
 		t.Fatalf("expected persisted tool call error")
 	}
@@ -175,6 +185,9 @@ func TestSQLiteStorePersistsToolCalls(t *testing.T) {
 	}
 	if stored.ID != record.ID {
 		t.Fatalf("expected direct lookup to return matching ID")
+	}
+	if stored.RouteTrace == nil || stored.RouteTrace.CapabilityID != "metrics.get_service_health" {
+		t.Fatalf("expected direct lookup route trace")
 	}
 }
 

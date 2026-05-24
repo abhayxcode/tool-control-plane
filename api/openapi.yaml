@@ -696,6 +696,8 @@ components:
           $ref: "#/components/schemas/RiskLevel"
         provider:
           type: string
+        route_trace:
+          $ref: "#/components/schemas/ProviderRouteTrace"
         result:
           $ref: "#/components/schemas/JSONObject"
         reason:
@@ -771,6 +773,8 @@ components:
           enum: [allowed, denied, invalid, approval_required, approved_executed]
         provider:
           type: string
+        route_trace:
+          $ref: "#/components/schemas/ProviderRouteTrace"
         status:
           type: string
           enum: [success, denied, invalid, approval_required, error]
@@ -782,6 +786,26 @@ components:
           type: string
         result:
           $ref: "#/components/schemas/JSONObject"
+    ProviderRouteTrace:
+      type: object
+      required: [capability_id, selected_provider, selected_adapter_available, reason]
+      properties:
+        capability_id:
+          type: string
+          example: metrics.get_service_health
+        selected_provider:
+          type: string
+          example: prometheus
+        selected_adapter_available:
+          type: boolean
+        alternative_providers:
+          type: array
+          items:
+            type: string
+          example: [mock]
+        reason:
+          type: string
+          example: Capability metrics.get_service_health is registered with provider prometheus.
     AuditEntry:
       type: object
       required:

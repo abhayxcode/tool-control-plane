@@ -72,14 +72,23 @@ type ToolCallRequest struct {
 }
 
 type ToolCallResponse struct {
-	Status            string         `json:"status"`
-	RiskLevel         string         `json:"risk_level"`
-	Provider          string         `json:"provider,omitempty"`
-	Result            map[string]any `json:"result,omitempty"`
-	Reason            string         `json:"reason,omitempty"`
-	Error             *ToolCallError `json:"error,omitempty"`
-	ApprovalRequired  bool           `json:"approval_required,omitempty"`
-	ApprovalRequestID string         `json:"approval_request_id,omitempty"`
+	Status            string              `json:"status"`
+	RiskLevel         string              `json:"risk_level"`
+	Provider          string              `json:"provider,omitempty"`
+	RouteTrace        *ProviderRouteTrace `json:"route_trace,omitempty"`
+	Result            map[string]any      `json:"result,omitempty"`
+	Reason            string              `json:"reason,omitempty"`
+	Error             *ToolCallError      `json:"error,omitempty"`
+	ApprovalRequired  bool                `json:"approval_required,omitempty"`
+	ApprovalRequestID string              `json:"approval_request_id,omitempty"`
+}
+
+type ProviderRouteTrace struct {
+	CapabilityID             string   `json:"capability_id"`
+	SelectedProvider         string   `json:"selected_provider"`
+	SelectedAdapterAvailable bool     `json:"selected_adapter_available"`
+	AlternativeProviders     []string `json:"alternative_providers,omitempty"`
+	Reason                   string   `json:"reason"`
 }
 
 type ToolCallError struct {
@@ -93,25 +102,26 @@ type ToolCallError struct {
 }
 
 type ToolCallRecord struct {
-	ID                string         `json:"id"`
-	At                string         `json:"at"`
-	RequestID         string         `json:"request_id,omitempty"`
-	OrgID             string         `json:"org_id"`
-	ActorUserID       string         `json:"actor_user_id"`
-	AgentRunID        string         `json:"agent_run_id"`
-	ServiceID         string         `json:"service_id"`
-	Environment       string         `json:"environment"`
-	Capability        string         `json:"capability"`
-	Action            string         `json:"action"`
-	Arguments         map[string]any `json:"arguments,omitempty"`
-	RiskLevel         string         `json:"risk_level"`
-	Decision          string         `json:"decision"`
-	Provider          string         `json:"provider,omitempty"`
-	Status            string         `json:"status"`
-	Reason            string         `json:"reason,omitempty"`
-	Error             *ToolCallError `json:"error,omitempty"`
-	ApprovalRequestID string         `json:"approval_request_id,omitempty"`
-	Result            map[string]any `json:"result,omitempty"`
+	ID                string              `json:"id"`
+	At                string              `json:"at"`
+	RequestID         string              `json:"request_id,omitempty"`
+	OrgID             string              `json:"org_id"`
+	ActorUserID       string              `json:"actor_user_id"`
+	AgentRunID        string              `json:"agent_run_id"`
+	ServiceID         string              `json:"service_id"`
+	Environment       string              `json:"environment"`
+	Capability        string              `json:"capability"`
+	Action            string              `json:"action"`
+	Arguments         map[string]any      `json:"arguments,omitempty"`
+	RiskLevel         string              `json:"risk_level"`
+	Decision          string              `json:"decision"`
+	Provider          string              `json:"provider,omitempty"`
+	RouteTrace        *ProviderRouteTrace `json:"route_trace,omitempty"`
+	Status            string              `json:"status"`
+	Reason            string              `json:"reason,omitempty"`
+	Error             *ToolCallError      `json:"error,omitempty"`
+	ApprovalRequestID string              `json:"approval_request_id,omitempty"`
+	Result            map[string]any      `json:"result,omitempty"`
 }
 
 type AuditEntry struct {
