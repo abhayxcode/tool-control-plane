@@ -57,6 +57,19 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/CapabilityDefinition"
+                  provider_config:
+                    $ref: "#/components/schemas/ProviderConfig"
+  /v1/readiness:
+    get:
+      summary: Readiness check for provider and store configuration
+      operationId: getReadiness
+      responses:
+        "200":
+          description: Readiness status and non-secret configuration checks.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
   /v1/tool-calls:
     post:
       summary: Execute or request approval for a governed tool call
@@ -228,6 +241,73 @@ components:
           type: string
         approval_required:
           type: boolean
+    ProviderConfig:
+      type: object
+      required: [code_provider, deploy_provider, github_selected, github_token_configured, github_base_url_set, store, ready, warnings]
+      properties:
+        code_provider:
+          type: string
+          example: github
+        deploy_provider:
+          type: string
+          example: github
+        github_selected:
+          type: boolean
+        github_token_configured:
+          type: boolean
+        github_base_url_set:
+          type: boolean
+        demo_repository:
+          type: string
+          example: acme/backend
+        store:
+          type: string
+          example: sqlite
+        ready:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            type: string
+    ReadinessResponse:
+      type: object
+      required: [status, capability_count, blockers, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, blocked]
+        capability_count:
+          type: integer
+        blockers:
+          type: array
+          items:
+            type: string
+        checks:
+          type: object
+          required: [capability_registry_loaded, provider_config, repository_access, store, auth_required, rate_limit_configured]
+          properties:
+            capability_registry_loaded:
+              type: boolean
+            provider_config:
+              $ref: "#/components/schemas/ProviderConfig"
+            repository_access:
+              type: object
+              required: [status, repository]
+              properties:
+                status:
+                  type: string
+                  enum: [ok, skipped, blocked]
+                repository:
+                  type: string
+                  example: acme/backend
+                reason:
+                  type: string
+            store:
+              type: string
+            auth_required:
+              type: boolean
+            rate_limit_configured:
+              type: boolean
     ToolCallRequest:
       type: object
       required: [org_id, actor_user_id, agent_run_id, service_id, environment, capability, action]

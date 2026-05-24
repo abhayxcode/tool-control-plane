@@ -71,6 +71,8 @@ Demo provider configs:
 
 `GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy providers, whether a GitHub token is configured, store mode, readiness, and warnings. It intentionally does not return secret values.
 
+`GET /v1/readiness` returns the same non-secret provider readiness plus capability count, store/auth/rate-limit checks, optional demo repository access check, and blockers. Set `TOOL_CONTROL_PLANE_DEMO_REPOSITORY=owner/repo` to let readiness verify that the configured GitHub token/App can read the pushed demo repository. Majdoor uses this endpoint for demo and internal-alpha preflight.
+
 From the workspace root, the local demo runner can load a provider env file:
 
 ```bash

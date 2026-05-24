@@ -161,6 +161,7 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER", "github")
 	t.Setenv("GITHUB_TOKEN", "github-token")
 	t.Setenv("GITHUB_API_BASE_URL", "https://github.example/api/v3")
+	t.Setenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY", "acme/backend")
 
 	config, err := configFromEnv()
 	if err != nil {
@@ -181,7 +182,7 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
 		t.Fatalf("unexpected store config")
 	}
-	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" {
+	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
 	}
 }
@@ -275,6 +276,138 @@ func TestCapabilitiesExposeMissingGitHubTokenWarning(t *testing.T) {
 	}
 	if len(body.ProviderConfig.Warnings) != 1 {
 		t.Fatalf("expected one warning, got %d", len(body.ProviderConfig.Warnings))
+	}
+}
+
+func TestReadinessReportsProviderBlockers(t *testing.T) {
+	mux := newMux(controlplane.NewService(), Config{
+		CodeProvider: controlplane.GitHubProvider,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/readiness", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		Status          string   `json:"status"`
+		CapabilityCount int      `json:"capability_count"`
+		Blockers        []string `json:"blockers"`
+		Checks          struct {
+			ProviderConfig map[string]any `json:"provider_config"`
+		} `json:"checks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode readiness: %v", err)
+	}
+	if body.Status != "blocked" {
+		t.Fatalf("expected blocked readiness, got %q", body.Status)
+	}
+	if body.CapabilityCount == 0 {
+		t.Fatalf("expected capability count")
+	}
+	if len(body.Blockers) != 1 {
+		t.Fatalf("expected one blocker, got %d", len(body.Blockers))
+	}
+	if body.Checks.ProviderConfig["ready"] != false {
+		t.Fatalf("expected provider config not ready")
+	}
+}
+
+func TestReadinessReportsReadyProviderConfig(t *testing.T) {
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/backend" {
+			t.Fatalf("unexpected GitHub path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Fatalf("expected bearer token")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"full_name":"acme/backend"}`))
+	}))
+	defer github.Close()
+
+	mux := newMux(controlplane.NewService(), Config{
+		CodeProvider:   controlplane.GitHubProvider,
+		DeployProvider: controlplane.GitHubProvider,
+		GitHubToken:    "test-token",
+		GitHubBaseURL:  github.URL,
+		DemoRepository: "acme/backend",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/readiness", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		Status   string   `json:"status"`
+		Blockers []string `json:"blockers"`
+		Checks   struct {
+			ProviderConfig   map[string]any `json:"provider_config"`
+			RepositoryAccess map[string]any `json:"repository_access"`
+		} `json:"checks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode readiness: %v", err)
+	}
+	if body.Status != "ok" {
+		t.Fatalf("expected ok readiness, got %q", body.Status)
+	}
+	if len(body.Blockers) != 0 {
+		t.Fatalf("expected no blockers, got %d", len(body.Blockers))
+	}
+	if body.Checks.ProviderConfig["github_token_configured"] != true {
+		t.Fatalf("expected configured github token")
+	}
+	if body.Checks.RepositoryAccess["status"] != "ok" {
+		t.Fatalf("expected repository access ok, got %#v", body.Checks.RepositoryAccess)
+	}
+}
+
+func TestReadinessBlocksWhenDemoRepositoryIsInaccessible(t *testing.T) {
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer github.Close()
+
+	mux := newMux(controlplane.NewService(), Config{
+		CodeProvider:   controlplane.GitHubProvider,
+		DeployProvider: controlplane.GitHubProvider,
+		GitHubToken:    "test-token",
+		GitHubBaseURL:  github.URL,
+		DemoRepository: "acme/backend",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/readiness", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		Status   string   `json:"status"`
+		Blockers []string `json:"blockers"`
+		Checks   struct {
+			RepositoryAccess map[string]any `json:"repository_access"`
+		} `json:"checks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode readiness: %v", err)
+	}
+	if body.Status != "blocked" {
+		t.Fatalf("expected blocked readiness, got %q", body.Status)
+	}
+	if len(body.Blockers) != 1 {
+		t.Fatalf("expected one blocker, got %d", len(body.Blockers))
+	}
+	if body.Checks.RepositoryAccess["status"] != "blocked" {
+		t.Fatalf("expected blocked repository access")
 	}
 }
 

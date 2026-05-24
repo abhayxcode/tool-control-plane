@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -56,6 +57,9 @@ func newMux(svc *controlplane.Service, configs ...Config) *http.ServeMux {
 		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write(api.OpenAPISpec)
+	})
+	mux.HandleFunc("GET /v1/readiness", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, readinessSummary(svc, config))
 	})
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
@@ -124,25 +128,142 @@ func newMux(svc *controlplane.Service, configs ...Config) *http.ServeMux {
 	return mux
 }
 
+func readinessSummary(svc *controlplane.Service, config Config) map[string]any {
+	providerConfig := providerConfigSummary(config)
+	blockers := providerConfigBlockers(config)
+	repositoryAccess := repositoryAccessSummary(config)
+	if repositoryAccessBlocker(repositoryAccess) != "" {
+		blockers = append(blockers, repositoryAccessBlocker(repositoryAccess))
+	}
+	status := "ok"
+	if len(blockers) > 0 {
+		status = "blocked"
+	}
+	return map[string]any{
+		"status":           status,
+		"capability_count": len(svc.Capabilities()),
+		"blockers":         blockers,
+		"checks": map[string]any{
+			"capability_registry_loaded": true,
+			"provider_config":            providerConfig,
+			"repository_access":          repositoryAccess,
+			"store":                      providerStore(config),
+			"auth_required":              strings.TrimSpace(config.APIToken) != "",
+			"rate_limit_configured":      config.RateLimitPerMinute > 0,
+		},
+	}
+}
+
 func providerConfigSummary(config Config) map[string]any {
 	codeProvider := providerOrMock(config.CodeProvider)
 	deployProvider := providerOrMock(config.DeployProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
 	githubConfigured := strings.TrimSpace(config.GitHubToken) != ""
-	warnings := []string{}
-	if githubSelected && !githubConfigured {
-		warnings = append(warnings, "GITHUB_TOKEN is required when a GitHub provider is selected.")
-	}
 	return map[string]any{
 		"code_provider":           codeProvider,
 		"deploy_provider":         deployProvider,
 		"github_selected":         githubSelected,
 		"github_token_configured": githubConfigured,
 		"github_base_url_set":     strings.TrimSpace(config.GitHubBaseURL) != "",
+		"demo_repository":         strings.TrimSpace(config.DemoRepository),
 		"store":                   providerStore(config),
 		"ready":                   !githubSelected || githubConfigured,
-		"warnings":                warnings,
+		"warnings":                providerConfigBlockers(config),
 	}
+}
+
+func providerConfigBlockers(config Config) []string {
+	codeProvider := providerOrMock(config.CodeProvider)
+	deployProvider := providerOrMock(config.DeployProvider)
+	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
+	if githubSelected && strings.TrimSpace(config.GitHubToken) == "" {
+		return []string{"GITHUB_TOKEN is required when a GitHub provider is selected."}
+	}
+	return []string{}
+}
+
+func repositoryAccessSummary(config Config) map[string]any {
+	repository := strings.TrimSpace(config.DemoRepository)
+	if repository == "" {
+		return map[string]any{
+			"status":     "skipped",
+			"repository": "",
+			"reason":     "TOOL_CONTROL_PLANE_DEMO_REPOSITORY is not set.",
+		}
+	}
+	codeProvider := providerOrMock(config.CodeProvider)
+	deployProvider := providerOrMock(config.DeployProvider)
+	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
+	if !githubSelected {
+		return map[string]any{
+			"status":     "skipped",
+			"repository": repository,
+			"reason":     "GitHub provider is not selected.",
+		}
+	}
+	if strings.TrimSpace(config.GitHubToken) == "" {
+		return map[string]any{
+			"status":     "blocked",
+			"repository": repository,
+			"reason":     "GITHUB_TOKEN is required before repository access can be checked.",
+		}
+	}
+	owner, repo, ok := splitRepository(repository)
+	if !ok {
+		return map[string]any{
+			"status":     "blocked",
+			"repository": repository,
+			"reason":     "TOOL_CONTROL_PLANE_DEMO_REPOSITORY must be owner/repo.",
+		}
+	}
+	status, reason := checkGitHubRepositoryAccess(config, owner, repo)
+	return map[string]any{
+		"status":     status,
+		"repository": repository,
+		"reason":     reason,
+	}
+}
+
+func repositoryAccessBlocker(repositoryAccess map[string]any) string {
+	if repositoryAccess["status"] == "blocked" {
+		if reason, ok := repositoryAccess["reason"].(string); ok && strings.TrimSpace(reason) != "" {
+			return reason
+		}
+		return "GitHub demo repository access check failed."
+	}
+	return ""
+}
+
+func splitRepository(repository string) (string, string, bool) {
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+}
+
+func checkGitHubRepositoryAccess(config Config, owner string, repo string) (string, string) {
+	baseURL := strings.TrimRight(strings.TrimSpace(config.GitHubBaseURL), "/")
+	if baseURL == "" {
+		baseURL = "https://api.github.com"
+	}
+	repoURL := baseURL + "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repo)
+	req, err := http.NewRequest(http.MethodGet, repoURL, nil)
+	if err != nil {
+		return "blocked", err.Error()
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(config.GitHubToken))
+	req.Header.Set("Accept", "application/vnd.github+json")
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "blocked", err.Error()
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return "ok", ""
+	}
+	return "blocked", "GitHub repository access check returned HTTP " + strconv.Itoa(resp.StatusCode) + "."
 }
 
 func providerOrMock(provider string) string {

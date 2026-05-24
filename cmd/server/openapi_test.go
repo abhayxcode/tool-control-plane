@@ -20,6 +20,7 @@ func TestOpenAPISpecDocumentsHTTPRoutes(t *testing.T) {
 		"/openapi.yaml:",
 		"/healthz:",
 		"/v1/capabilities:",
+		"/v1/readiness:",
 		"/v1/tool-calls:",
 		"/v1/audit:",
 		"/v1/approvals:",
@@ -29,6 +30,8 @@ func TestOpenAPISpecDocumentsHTTPRoutes(t *testing.T) {
 		"/v1/approvals/{id}/execute:",
 		"ToolCallRequest:",
 		"ToolCallResponse:",
+		"ProviderConfig:",
+		"ReadinessResponse:",
 		"ApprovalRequest:",
 		"AuditEntry:",
 	} {

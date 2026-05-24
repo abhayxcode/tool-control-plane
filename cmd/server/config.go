@@ -22,6 +22,7 @@ type Config struct {
 	DeployProvider     string
 	GitHubToken        string
 	GitHubBaseURL      string
+	DemoRepository     string
 }
 
 func configFromEnv() (Config, error) {
@@ -35,6 +36,7 @@ func configFromEnv() (Config, error) {
 		DeployProvider:  os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
 		GitHubToken:     os.Getenv("GITHUB_TOKEN"),
 		GitHubBaseURL:   os.Getenv("GITHUB_API_BASE_URL"),
+		DemoRepository:  os.Getenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY"),
 	}
 	rawShutdownTimeout := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT"))
 	if rawShutdownTimeout != "" {
