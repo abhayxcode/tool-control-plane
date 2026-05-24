@@ -154,6 +154,32 @@ func TestNewServiceFromEnvCanRouteDeployCapabilitiesToGitHub(t *testing.T) {
 	}
 }
 
+func TestNewServiceFromEnvCanRouteErrorCapabilitiesToSentry(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		ErrorsProvider:  controlplane.SentryProvider,
+		SentryAuthToken: "sentry-token",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	var foundSentryErrors bool
+	var foundMockMetrics bool
+	for _, detail := range svc.CapabilityDetails() {
+		if detail.ID == "errors.get_recent_errors" && detail.Provider == controlplane.SentryProvider {
+			foundSentryErrors = true
+		}
+		if detail.ID == "metrics.get_service_health" && detail.Provider == "mock" {
+			foundMockMetrics = true
+		}
+	}
+	if !foundSentryErrors {
+		t.Fatalf("expected errors.get_recent_errors to use sentry provider")
+	}
+	if !foundMockMetrics {
+		t.Fatalf("expected metrics.get_service_health to remain mock provider")
+	}
+}
+
 func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_ADDR", ":4200")
 	t.Setenv("TOOL_CONTROL_PLANE_API_TOKEN", "secret-token")
@@ -163,6 +189,7 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_SQLITE_PATH", "/tmp/controlplane.sqlite3")
 	t.Setenv("TOOL_CONTROL_PLANE_CODE_PROVIDER", "github")
 	t.Setenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER", "github")
+	t.Setenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER", "sentry")
 	t.Setenv("GITHUB_TOKEN", "github-token")
 	t.Setenv("GITHUB_APP_ID", "12345")
 	t.Setenv("GITHUB_APP_INSTALLATION_ID", "42")
@@ -170,6 +197,10 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("GITHUB_API_BASE_URL", "https://github.example/api/v3")
 	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS", "4")
 	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF", "25ms")
+	t.Setenv("SENTRY_AUTH_TOKEN", "sentry-token")
+	t.Setenv("SENTRY_ORG", "acme")
+	t.Setenv("SENTRY_PROJECT", "backend")
+	t.Setenv("SENTRY_BASE_URL", "https://sentry.example")
 	t.Setenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY", "acme/backend")
 
 	config, err := configFromEnv()
@@ -191,8 +222,11 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
 		t.Fatalf("unexpected store config")
 	}
-	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
+	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
+	}
+	if config.SentryAuthToken != "sentry-token" || config.SentryOrg != "acme" || config.SentryProject != "backend" || config.SentryBaseURL != "https://sentry.example" {
+		t.Fatalf("unexpected Sentry config")
 	}
 	if config.GitHubAppID != "12345" || config.GitHubAppInstallationID != "42" || config.GitHubAppPrivateKey != "line1\nline2" {
 		t.Fatalf("unexpected GitHub App config")
@@ -267,6 +301,9 @@ func TestCapabilitiesExposeProviderConfigReadiness(t *testing.T) {
 	if body.ProviderConfig["deploy_provider"] != controlplane.GitHubProvider {
 		t.Fatalf("expected github deploy provider, got %#v", body.ProviderConfig["deploy_provider"])
 	}
+	if body.ProviderConfig["errors_provider"] != "mock" {
+		t.Fatalf("expected mock errors provider, got %#v", body.ProviderConfig["errors_provider"])
+	}
 	if body.ProviderConfig["github_token_configured"] != true {
 		t.Fatalf("expected configured github token")
 	}
@@ -278,6 +315,50 @@ func TestCapabilitiesExposeProviderConfigReadiness(t *testing.T) {
 	}
 	if body.ProviderConfig["store"] != "sqlite" {
 		t.Fatalf("expected sqlite store, got %#v", body.ProviderConfig["store"])
+	}
+}
+
+func TestCapabilitiesExposeSentryProviderConfigReadiness(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		ErrorsProvider:  controlplane.SentryProvider,
+		SentryAuthToken: "sentry-token",
+		SentryOrg:       "acme",
+		SentryProject:   "backend",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	mux := newMux(svc, Config{
+		ErrorsProvider:  controlplane.SentryProvider,
+		SentryAuthToken: "sentry-token",
+		SentryOrg:       "acme",
+		SentryProject:   "backend",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig map[string]any `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig["errors_provider"] != controlplane.SentryProvider {
+		t.Fatalf("expected sentry errors provider, got %#v", body.ProviderConfig["errors_provider"])
+	}
+	if body.ProviderConfig["sentry_selected"] != true || body.ProviderConfig["sentry_token_configured"] != true {
+		t.Fatalf("expected sentry selected and configured, got %#v", body.ProviderConfig)
+	}
+	if body.ProviderConfig["sentry_default_org_set"] != true || body.ProviderConfig["sentry_default_project_set"] != true {
+		t.Fatalf("expected sentry defaults configured, got %#v", body.ProviderConfig)
+	}
+	if body.ProviderConfig["ready"] != true {
+		t.Fatalf("expected provider config ready")
 	}
 }
 
@@ -319,6 +400,35 @@ func TestCapabilitiesExposeGitHubAppProviderConfigReadiness(t *testing.T) {
 func TestCapabilitiesExposeMissingGitHubTokenWarning(t *testing.T) {
 	mux := newMux(controlplane.NewService(), Config{
 		CodeProvider: controlplane.GitHubProvider,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig struct {
+			Ready    bool     `json:"ready"`
+			Warnings []string `json:"warnings"`
+		} `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig.Ready {
+		t.Fatalf("expected provider config not ready")
+	}
+	if len(body.ProviderConfig.Warnings) != 1 {
+		t.Fatalf("expected one warning, got %d", len(body.ProviderConfig.Warnings))
+	}
+}
+
+func TestCapabilitiesExposeMissingSentryTokenWarning(t *testing.T) {
+	mux := newMux(controlplane.NewService(), Config{
+		ErrorsProvider: controlplane.SentryProvider,
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
 	resp := httptest.NewRecorder()

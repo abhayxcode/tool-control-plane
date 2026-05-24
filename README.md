@@ -18,7 +18,7 @@ This repo now exposes the first real Tool Control Plane HTTP boundary for Majdoo
 
 v1 milestone checklist: [`docs/v1-milestone.md`](docs/v1-milestone.md)
 
-Tool execution is routed through provider adapters. The current built-in provider is `mock`; future providers such as GitHub, Grafana, Datadog, Kubernetes, and Jira should implement the same adapter boundary instead of changing policy or approval logic.
+Tool execution is routed through provider adapters. Current built-in providers are `mock`, `github`, and `sentry`; future providers such as Grafana, Datadog, Kubernetes, and Jira should implement the same adapter boundary instead of changing policy or approval logic.
 
 Audit and approval state is routed through a storage interface. The default implementation is in-memory. SQLite can be enabled for local durable dev mode; Postgres can be added behind the same store boundary later.
 
@@ -67,12 +67,21 @@ GitHub adapter:
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
 - `deploy.get_recent_deploys` is implemented against GitHub Actions workflow runs
 
+Sentry adapter:
+
+- default behavior keeps error capabilities on `mock`
+- set `TOOL_CONTROL_PLANE_ERRORS_PROVIDER=sentry` to route `errors.get_recent_errors` to the Sentry adapter
+- set `SENTRY_AUTH_TOKEN` before using the Sentry adapter; the token needs Sentry `event:read` access for the selected org/project
+- optional `SENTRY_ORG` and `SENTRY_PROJECT` provide defaults when tool calls do not include organization/project arguments
+- optional `SENTRY_BASE_URL` supports self-hosted Sentry later
+- `errors.get_recent_errors` is implemented against the Sentry project issues API and returns normalized service status, top errors, evidence, and source URLs
+
 Demo provider configs:
 
 - `examples/demo.mock.env` keeps all code, CI, and deployment calls on mock providers.
-- `examples/demo.github.env.example` documents the real GitHub provider variables. Copy it to a private ignored file before adding credentials.
+- `examples/demo.github.env.example` documents the real GitHub and optional Sentry provider variables. Copy it to a private ignored file before adding credentials.
 
-`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy providers, GitHub auth mode, whether token/App credentials are configured, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
+`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors providers, GitHub auth mode, whether token/App credentials are configured, Sentry readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
 
 `GET /v1/readiness` returns the same non-secret provider readiness plus capability count, store/auth/rate-limit checks, optional demo repository access check, and blockers. Set `TOOL_CONTROL_PLANE_DEMO_REPOSITORY=owner/repo` to let readiness verify that the configured GitHub token/App can read the pushed demo repository. Majdoor uses this endpoint for demo and internal-alpha preflight.
 
@@ -183,6 +192,18 @@ Log excerpts are bounded to keep agent traces small.
 
 The GitHub response includes normalized deployment `status`, workflow run `deploys`, `source_url`, and evidence.
 
+`errors.get_recent_errors` accepts:
+
+- `organization`, `organization_slug`, or `org`, defaulting to `SENTRY_ORG`
+- `project` or `project_slug`, defaulting to `SENTRY_PROJECT`
+- optional `environment` or `env`, appended to the query when the query does not already include `environment:`
+- optional `query`, defaulting to `is:unresolved`
+- optional `stats_period` or `statsPeriod`, defaulting to `24h`
+- optional `sort`, defaulting to `freq`
+- optional `limit`, capped at 20
+
+The Sentry response includes normalized `status`, `top_errors`, `source_url`, and evidence. The adapter currently uses Sentry's documented project issues endpoint: `GET /api/0/projects/{organization_id_or_slug}/{project_id_or_slug}/issues/`.
+
 Planned stack:
 
 - Go service
@@ -208,6 +229,7 @@ Configuration:
 - `TOOL_CONTROL_PLANE_SQLITE_PATH`
 - `TOOL_CONTROL_PLANE_CODE_PROVIDER`
 - `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER`
+- `TOOL_CONTROL_PLANE_ERRORS_PROVIDER`
 - `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS`
 - `TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF`
 - `GITHUB_TOKEN`
@@ -216,6 +238,10 @@ Configuration:
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_APP_PRIVATE_KEY_PATH`
 - `GITHUB_API_BASE_URL`
+- `SENTRY_AUTH_TOKEN`
+- `SENTRY_ORG`
+- `SENTRY_PROJECT`
+- `SENTRY_BASE_URL`
 
 ## APIs
 

@@ -69,9 +69,24 @@ func DefaultAdapterRegistry() AdapterRegistry {
 	})
 }
 
+type AdapterRegistryOptions struct {
+	GitHub *GitHubAdapterConfig
+	Sentry *SentryAdapterConfig
+}
+
+func DefaultAdapterRegistryWithOptions(options AdapterRegistryOptions) AdapterRegistry {
+	adapters := map[string]ToolAdapter{
+		"mock": NewMockAdapter(defaultMockFixtures()),
+	}
+	if options.GitHub != nil {
+		adapters[GitHubProvider] = NewGitHubAdapter(*options.GitHub)
+	}
+	if options.Sentry != nil {
+		adapters[SentryProvider] = NewSentryAdapter(*options.Sentry)
+	}
+	return NewAdapterRegistry(adapters)
+}
+
 func DefaultAdapterRegistryWithGitHub(config GitHubAdapterConfig) AdapterRegistry {
-	return NewAdapterRegistry(map[string]ToolAdapter{
-		"mock":   NewMockAdapter(defaultMockFixtures()),
-		"github": NewGitHubAdapter(config),
-	})
+	return DefaultAdapterRegistryWithOptions(AdapterRegistryOptions{GitHub: &config})
 }

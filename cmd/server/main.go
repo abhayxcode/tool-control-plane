@@ -157,35 +157,49 @@ func readinessSummary(svc *controlplane.Service, config Config) map[string]any {
 func providerConfigSummary(config Config) map[string]any {
 	codeProvider := providerOrMock(config.CodeProvider)
 	deployProvider := providerOrMock(config.DeployProvider)
+	errorsProvider := providerOrMock(config.ErrorsProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
 	githubTokenConfigured := strings.TrimSpace(config.GitHubToken) != ""
 	githubAppAuthConfigured := githubAppConfigured(config)
 	githubConfigured := githubTokenConfigured || githubAppAuthConfigured
+	sentrySelected := errorsProvider == controlplane.SentryProvider
+	sentryConfigured := strings.TrimSpace(config.SentryAuthToken) != ""
 	return map[string]any{
-		"code_provider":           codeProvider,
-		"deploy_provider":         deployProvider,
-		"github_selected":         githubSelected,
-		"github_auth_mode":        githubAuthMode(config),
-		"github_token_configured": githubTokenConfigured,
-		"github_app_configured":   githubAppAuthConfigured,
-		"github_base_url_set":     strings.TrimSpace(config.GitHubBaseURL) != "",
-		"github_max_attempts":     githubMaxAttempts(config),
-		"github_retry_backoff_ms": int(githubRetryBackoff(config) / time.Millisecond),
-		"demo_repository":         strings.TrimSpace(config.DemoRepository),
-		"store":                   providerStore(config),
-		"ready":                   !githubSelected || githubConfigured,
-		"warnings":                providerConfigBlockers(config),
+		"code_provider":              codeProvider,
+		"deploy_provider":            deployProvider,
+		"errors_provider":            errorsProvider,
+		"github_selected":            githubSelected,
+		"github_auth_mode":           githubAuthMode(config),
+		"github_token_configured":    githubTokenConfigured,
+		"github_app_configured":      githubAppAuthConfigured,
+		"github_base_url_set":        strings.TrimSpace(config.GitHubBaseURL) != "",
+		"github_max_attempts":        githubMaxAttempts(config),
+		"github_retry_backoff_ms":    int(githubRetryBackoff(config) / time.Millisecond),
+		"sentry_selected":            sentrySelected,
+		"sentry_token_configured":    sentryConfigured,
+		"sentry_base_url_set":        strings.TrimSpace(config.SentryBaseURL) != "",
+		"sentry_default_org_set":     strings.TrimSpace(config.SentryOrg) != "",
+		"sentry_default_project_set": strings.TrimSpace(config.SentryProject) != "",
+		"demo_repository":            strings.TrimSpace(config.DemoRepository),
+		"store":                      providerStore(config),
+		"ready":                      (!githubSelected || githubConfigured) && (!sentrySelected || sentryConfigured),
+		"warnings":                   providerConfigBlockers(config),
 	}
 }
 
 func providerConfigBlockers(config Config) []string {
+	blockers := []string{}
 	codeProvider := providerOrMock(config.CodeProvider)
 	deployProvider := providerOrMock(config.DeployProvider)
+	errorsProvider := providerOrMock(config.ErrorsProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
 	if githubSelected && !githubCredentialConfigured(config) {
-		return []string{"GITHUB_TOKEN or GitHub App installation credentials are required when a GitHub provider is selected."}
+		blockers = append(blockers, "GITHUB_TOKEN or GitHub App installation credentials are required when a GitHub provider is selected.")
 	}
-	return []string{}
+	if errorsProvider == controlplane.SentryProvider && strings.TrimSpace(config.SentryAuthToken) == "" {
+		blockers = append(blockers, "SENTRY_AUTH_TOKEN is required when the Sentry errors provider is selected.")
+	}
+	return blockers
 }
 
 func repositoryAccessSummary(config Config) map[string]any {

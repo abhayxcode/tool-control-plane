@@ -152,6 +152,105 @@ func TestGitHubAdapterUsesGitHubAppInstallationToken(t *testing.T) {
 	}
 }
 
+func TestSentryAdapterGetsRecentErrors(t *testing.T) {
+	var sawAuth bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/0/projects/acme/backend/issues/" {
+			t.Fatalf("unexpected sentry request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("Authorization") == "Bearer sentry-token" {
+			sawAuth = true
+		}
+		if r.URL.Query().Get("query") != "is:unresolved environment:prod" {
+			t.Fatalf("unexpected query: %q", r.URL.Query().Get("query"))
+		}
+		if r.URL.Query().Get("sort") != "freq" {
+			t.Fatalf("unexpected sort: %q", r.URL.Query().Get("sort"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{
+			"id": "1",
+			"shortId": "BACKEND-1",
+			"title": "database connection timeout",
+			"culprit": "db.connect",
+			"level": "error",
+			"status": "unresolved",
+			"count": "431",
+			"userCount": 42,
+			"firstSeen": "2026-07-16T09:00:00Z",
+			"lastSeen": "2026-07-16T10:00:00Z",
+			"permalink": "https://sentry.example/acme/backend/issues/1/"
+		}]`))
+	}))
+	defer server.Close()
+
+	adapter := NewSentryAdapter(SentryAdapterConfig{
+		Token:   "sentry-token",
+		Org:     "acme",
+		Project: "backend",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "errors.get_recent_errors",
+		Provider: SentryProvider,
+	}, ToolCallRequest{
+		Environment: "prod",
+		Arguments: map[string]any{
+			"environment": "prod",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected sentry result, got error: %v", err)
+	}
+	if !sawAuth {
+		t.Fatalf("expected sentry bearer token")
+	}
+	if result["status"] != "degraded" {
+		t.Fatalf("expected degraded status, got %#v", result["status"])
+	}
+	topErrors := result["top_errors"].([]map[string]any)
+	if topErrors[0]["title"] != "database connection timeout" {
+		t.Fatalf("unexpected top error: %#v", topErrors[0])
+	}
+	if result["source_url"] != "https://sentry.example/acme/backend/issues/1/" {
+		t.Fatalf("unexpected source url: %#v", result["source_url"])
+	}
+}
+
+func TestSentryAdapterReturnsHealthyWhenNoIssues(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	adapter := NewSentryAdapter(SentryAdapterConfig{
+		Token:   "sentry-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "errors.get_recent_errors",
+		Provider: SentryProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"organization": "acme",
+			"project":      "backend",
+			"query":        "",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected sentry result, got error: %v", err)
+	}
+	if result["status"] != "healthy" {
+		t.Fatalf("expected healthy status, got %#v", result["status"])
+	}
+	if result["source_url"] != "" {
+		t.Fatalf("expected no source url, got %#v", result["source_url"])
+	}
+}
+
 func TestGitHubAdapterRejectsUnsupportedCapabilities(t *testing.T) {
 	adapter := NewGitHubAdapter(GitHubAdapterConfig{
 		Token: "test-token",
@@ -1243,6 +1342,24 @@ func TestGitHubDeployProviderOverridesDeploymentCapability(t *testing.T) {
 	}
 	if codeHost.Provider != "mock" {
 		t.Fatalf("expected code host provider to remain mock, got %q", codeHost.Provider)
+	}
+}
+
+func TestSentryProviderOverridesErrorsCapability(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(SentryProviderOverrides())
+	errorsCapability, ok := registry.byID["errors.get_recent_errors"]
+	if !ok {
+		t.Fatalf("expected errors capability")
+	}
+	if errorsCapability.Provider != SentryProvider {
+		t.Fatalf("expected sentry provider, got %q", errorsCapability.Provider)
+	}
+	metrics, ok := registry.byID["metrics.get_service_health"]
+	if !ok {
+		t.Fatalf("expected metrics capability")
+	}
+	if metrics.Provider != "mock" {
+		t.Fatalf("expected metrics provider to remain mock, got %q", metrics.Provider)
 	}
 }
 

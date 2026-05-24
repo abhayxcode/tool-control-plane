@@ -243,7 +243,7 @@ components:
           type: boolean
     ProviderConfig:
       type: object
-      required: [code_provider, deploy_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, store, ready, warnings]
+      required: [code_provider, deploy_provider, errors_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, store, ready, warnings]
       properties:
         code_provider:
           type: string
@@ -251,6 +251,9 @@ components:
         deploy_provider:
           type: string
           example: github
+        errors_provider:
+          type: string
+          example: sentry
         github_selected:
           type: boolean
         github_auth_mode:
@@ -261,6 +264,16 @@ components:
         github_app_configured:
           type: boolean
         github_base_url_set:
+          type: boolean
+        sentry_selected:
+          type: boolean
+        sentry_token_configured:
+          type: boolean
+        sentry_base_url_set:
+          type: boolean
+        sentry_default_org_set:
+          type: boolean
+        sentry_default_project_set:
           type: boolean
         demo_repository:
           type: string

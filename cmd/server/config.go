@@ -20,6 +20,7 @@ type Config struct {
 	SQLitePath              string
 	CodeProvider            string
 	DeployProvider          string
+	ErrorsProvider          string
 	GitHubToken             string
 	GitHubAppID             string
 	GitHubAppInstallationID string
@@ -28,6 +29,10 @@ type Config struct {
 	GitHubBaseURL           string
 	GitHubMaxAttempts       int
 	GitHubRetryBackoff      time.Duration
+	SentryAuthToken         string
+	SentryOrg               string
+	SentryProject           string
+	SentryBaseURL           string
 	DemoRepository          string
 }
 
@@ -40,12 +45,17 @@ func configFromEnv() (Config, error) {
 		SQLitePath:              os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
 		CodeProvider:            os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
 		DeployProvider:          os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
+		ErrorsProvider:          os.Getenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER"),
 		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
 		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
 		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),
 		GitHubAppPrivateKey:     normalizeGitHubAppPrivateKey(os.Getenv("GITHUB_APP_PRIVATE_KEY")),
 		GitHubAppPrivateKeyPath: os.Getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
 		GitHubBaseURL:           os.Getenv("GITHUB_API_BASE_URL"),
+		SentryAuthToken:         os.Getenv("SENTRY_AUTH_TOKEN"),
+		SentryOrg:               os.Getenv("SENTRY_ORG"),
+		SentryProject:           os.Getenv("SENTRY_PROJECT"),
+		SentryBaseURL:           os.Getenv("SENTRY_BASE_URL"),
 		DemoRepository:          os.Getenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY"),
 	}
 	rawShutdownTimeout := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT"))
@@ -87,8 +97,10 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 	registry := controlplane.DefaultCapabilityRegistry()
 	adapters := controlplane.DefaultAdapterRegistry()
 	store := controlplane.Store(controlplane.NewMemoryStore())
+	var githubConfig *controlplane.GitHubAdapterConfig
+	var sentryConfig *controlplane.SentryAdapterConfig
+	overrides := map[string]string{}
 	if config.CodeProvider == controlplane.GitHubProvider || config.DeployProvider == controlplane.GitHubProvider {
-		overrides := map[string]string{}
 		if config.CodeProvider == controlplane.GitHubProvider {
 			for id, provider := range controlplane.GitHubProviderOverrides() {
 				overrides[id] = provider
@@ -99,17 +111,34 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 				overrides[id] = provider
 			}
 		}
-		registry = registry.WithProviderOverrides(overrides)
 		tokenSource, err := githubTokenSourceFromConfig(config, http.DefaultClient)
 		if err != nil {
 			return nil, err
 		}
-		adapters = controlplane.DefaultAdapterRegistryWithGitHub(controlplane.GitHubAdapterConfig{
+		githubConfig = &controlplane.GitHubAdapterConfig{
 			Token:        config.GitHubToken,
 			TokenSource:  tokenSource,
 			BaseURL:      config.GitHubBaseURL,
 			MaxAttempts:  config.GitHubMaxAttempts,
 			RetryBackoff: config.GitHubRetryBackoff,
+		}
+	}
+	if config.ErrorsProvider == controlplane.SentryProvider {
+		for id, provider := range controlplane.SentryProviderOverrides() {
+			overrides[id] = provider
+		}
+		sentryConfig = &controlplane.SentryAdapterConfig{
+			Token:   config.SentryAuthToken,
+			Org:     config.SentryOrg,
+			Project: config.SentryProject,
+			BaseURL: config.SentryBaseURL,
+		}
+	}
+	if len(overrides) > 0 {
+		registry = registry.WithProviderOverrides(overrides)
+		adapters = controlplane.DefaultAdapterRegistryWithOptions(controlplane.AdapterRegistryOptions{
+			GitHub: githubConfig,
+			Sentry: sentryConfig,
 		})
 	}
 	if config.Store == "sqlite" || config.SQLitePath != "" {
