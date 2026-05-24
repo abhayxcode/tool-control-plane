@@ -34,6 +34,31 @@ type ConnectorCreateRequest struct {
 	Status     string         `json:"status,omitempty"`
 }
 
+type PolicyListResponse struct {
+	Source        string       `json:"source"`
+	PolicyFileSet bool         `json:"policy_file_set"`
+	RuleCount     int          `json:"rule_count"`
+	Rules         []PolicyRule `json:"rules"`
+}
+
+type PolicyRule struct {
+	ID     string          `json:"id"`
+	Effect string          `json:"effect"`
+	Reason string          `json:"reason,omitempty"`
+	Match  PolicyRuleMatch `json:"match"`
+}
+
+type PolicyRuleMatch struct {
+	OrgID       string `json:"org_id,omitempty"`
+	ActorUserID string `json:"actor_user_id,omitempty"`
+	ServiceID   string `json:"service_id,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	Capability  string `json:"capability,omitempty"`
+	Action      string `json:"action,omitempty"`
+	RiskLevel   string `json:"risk_level,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+}
+
 type ToolCallRequest struct {
 	RequestID   string         `json:"request_id,omitempty"`
 	OrgID       string         `json:"org_id"`

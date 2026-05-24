@@ -59,6 +59,14 @@ func TestClientCallsToolAndApprovalLifecycle(t *testing.T) {
 		t.Fatalf("unexpected created connector ID: %q", createdConnector.ID)
 	}
 
+	policies, err := tcp.Policies(ctx)
+	if err != nil {
+		t.Fatalf("policies: %v", err)
+	}
+	if policies.Source != "file" || policies.RuleCount != 1 || policies.Rules[0].ID != "deny-prod-runtime" {
+		t.Fatalf("unexpected policies response: %#v", policies)
+	}
+
 	toolCall, err := tcp.CallTool(ctx, ToolCallRequest{
 		OrgID:       "default",
 		ActorUserID: "local-user",
@@ -286,6 +294,24 @@ func testMux() *http.ServeMux {
 			SecretRef: "vault:internal-api-token",
 			Status:    "configured",
 			Source:    "api",
+		})
+	})
+	mux.HandleFunc("GET /v1/policies", func(w http.ResponseWriter, r *http.Request) {
+		writeTestJSON(w, PolicyListResponse{
+			Source:        "file",
+			PolicyFileSet: true,
+			RuleCount:     1,
+			Rules: []PolicyRule{
+				{
+					ID:     "deny-prod-runtime",
+					Effect: "deny",
+					Reason: "Runtime reads blocked during incident.",
+					Match: PolicyRuleMatch{
+						Environment: "prod",
+						Capability:  "runtime",
+					},
+				},
+			},
 		})
 	})
 	mux.HandleFunc("POST /v1/tool-calls", func(w http.ResponseWriter, r *http.Request) {

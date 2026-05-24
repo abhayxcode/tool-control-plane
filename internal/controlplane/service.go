@@ -130,6 +130,14 @@ func (s *Service) CapabilityDetails() []CapabilityDefinition {
 	return s.registry.Details()
 }
 
+func (s *Service) PolicyRules() []PolicyRule {
+	provider, ok := s.policy.(PolicyRuleProvider)
+	if !ok {
+		return nil
+	}
+	return provider.PolicyRules()
+}
+
 func (s *Service) CallTool(req ToolCallRequest) ToolCallResponse {
 	decision := s.policy.Evaluate(req, s.registry)
 	if decision.Capability.ID != "" {

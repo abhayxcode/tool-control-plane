@@ -108,6 +108,15 @@ Demo provider configs:
 
 `POST /v1/connectors` registers non-secret connector metadata for internal alpha workflows. This is useful for onboarding/admin state and future dynamic routing. It does not hot-swap provider adapters in the running process yet; env/config still controls active V1 provider routing.
 
+Policy config:
+
+- default policy allows registered read and low-risk write tools, requires approval for high-risk tools, and denies unknown tools
+- set `TOOL_CONTROL_PLANE_POLICY_FILE=examples/policy.example.json` to load ordered JSON policy rules at startup
+- supported rule effects are `allow`, `deny`, and `require_approval`
+- rules can match `org_id`, `actor_user_id`, `service_id`, `environment`, `capability`, `action`, `risk_level`, and `provider`
+- rules only apply to registered capabilities; policy config cannot enable unknown tools
+- `GET /v1/policies` exposes loaded rules and source metadata for admin/debug views
+
 `GET /v1/readiness` returns the same non-secret provider readiness plus capability count, store/auth/rate-limit checks, optional demo repository access check, and blockers. Set `TOOL_CONTROL_PLANE_DEMO_REPOSITORY=owner/repo` to let readiness verify that the configured GitHub token/App can read the pushed demo repository. Majdoor uses this endpoint for demo and internal-alpha preflight.
 
 MCP-compatible endpoint:
@@ -116,7 +125,7 @@ MCP-compatible endpoint:
 - supported methods: `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, and `ping`
 - `tools/list` exposes the same governed capability registry as MCP tool definitions
 - `tools/call` routes through the existing policy, validation, provider adapter, approval, and audit path
-- `resources/list` and `resources/read` expose non-secret capability, provider-config, connector, readiness, audit, tool-call, and audit-export resources
+- `resources/list` and `resources/read` expose non-secret capability, provider-config, connector, policy, readiness, audit, tool-call, and audit-export resources
 - when `TOOL_CONTROL_PLANE_API_TOKEN` is set, `/mcp` uses the same bearer-token guard as the REST API
 
 MCP tool calls use the MCP tool name as `capability.action`. Standard metadata fields such as `org_id`, `actor_user_id`, `agent_run_id`, `service_id`, `environment`, and `request_id` are extracted from `arguments`; all remaining fields are passed to the underlying provider as tool arguments. A nested `arguments` or `tool_args` object can also be used for provider-specific arguments.
@@ -302,6 +311,7 @@ Configuration:
 - `TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE`
 - `TOOL_CONTROL_PLANE_STORE`
 - `TOOL_CONTROL_PLANE_SQLITE_PATH`
+- `TOOL_CONTROL_PLANE_POLICY_FILE`
 - `TOOL_CONTROL_PLANE_CODE_PROVIDER`
 - `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER`
 - `TOOL_CONTROL_PLANE_ERRORS_PROVIDER`
@@ -343,6 +353,7 @@ Go client package: [`client`](client)
 - `GET /v1/capabilities` returns stable capability IDs plus risk/provider metadata.
 - `GET /v1/connectors`
 - `POST /v1/connectors`
+- `GET /v1/policies`
 - `GET /v1/tool-calls`
 - `POST /v1/tool-calls`
 - `GET /v1/tool-calls/{id}`

@@ -115,6 +115,17 @@ paths:
                 $ref: "#/components/schemas/Connector"
         "400":
           description: Invalid connector request.
+  /v1/policies:
+    get:
+      summary: List loaded policy rules
+      operationId: listPolicies
+      responses:
+        "200":
+          description: Policy source metadata and ordered rules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyListResponse"
   /v1/readiness:
     get:
       summary: Readiness check for provider and store configuration
@@ -444,6 +455,61 @@ components:
         status:
           type: string
           enum: [configured, ready, blocked, disabled]
+    PolicyListResponse:
+      type: object
+      required: [source, policy_file_set, rule_count, rules]
+      properties:
+        source:
+          type: string
+          enum: [static, file]
+        policy_file_set:
+          type: boolean
+        rule_count:
+          type: integer
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/PolicyRule"
+    PolicyRule:
+      type: object
+      required: [id, effect, match]
+      properties:
+        id:
+          type: string
+          example: require-prod-write-approval
+        effect:
+          type: string
+          enum: [allow, deny, require_approval]
+        reason:
+          type: string
+        match:
+          $ref: "#/components/schemas/PolicyRuleMatch"
+    PolicyRuleMatch:
+      type: object
+      properties:
+        org_id:
+          type: string
+          example: default
+        actor_user_id:
+          type: string
+          example: u_123
+        service_id:
+          type: string
+          example: backend
+        environment:
+          type: string
+          example: prod
+        capability:
+          type: string
+          example: deploy
+        action:
+          type: string
+          example: rollback
+        risk_level:
+          $ref: "#/components/schemas/RiskLevel"
+        provider:
+          type: string
+          example: github
     ProviderConfig:
       type: object
       required: [code_provider, deploy_provider, errors_provider, metrics_provider, runtime_provider, docs_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, kubernetes_selected, kubernetes_base_url_set, kubernetes_token_configured, store, ready, warnings]
@@ -571,6 +637,8 @@ components:
               type: boolean
             rate_limit_configured:
               type: boolean
+            policy:
+              $ref: "#/components/schemas/PolicyListResponse"
     ToolCallRequest:
       type: object
       required: [org_id, actor_user_id, agent_run_id, service_id, environment, capability, action]

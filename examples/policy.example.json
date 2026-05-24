@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "deny-prod-runtime-during-incident",
+      "effect": "deny",
+      "reason": "Runtime reads are temporarily blocked for this production incident.",
+      "match": {
+        "org_id": "default",
+        "environment": "prod",
+        "capability": "runtime"
+      }
+    },
+    {
+      "id": "require-prod-metrics-approval",
+      "effect": "require_approval",
+      "reason": "Production metrics access requires approval in this sample policy.",
+      "match": {
+        "org_id": "default",
+        "environment": "prod",
+        "capability": "metrics",
+        "action": "get_service_health"
+      }
+    },
+    {
+      "id": "allow-staging-rollbacks",
+      "effect": "allow",
+      "reason": "Staging rollbacks are allowed for this sample policy.",
+      "match": {
+        "org_id": "default",
+        "environment": "staging",
+        "capability": "deploy",
+        "action": "rollback"
+      }
+    }
+  ]
+}

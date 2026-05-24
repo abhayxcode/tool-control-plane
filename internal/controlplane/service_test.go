@@ -127,6 +127,47 @@ func TestCreateConnectorRejectsInvalidRequests(t *testing.T) {
 	}
 }
 
+func TestServiceUsesPolicyRulesForToolCalls(t *testing.T) {
+	policy, err := NewRulePolicyEngine(PolicyConfig{
+		Rules: []PolicyRule{
+			{
+				ID:     "approval-for-prod-metrics",
+				Effect: PolicyEffectRequireApproval,
+				Match: PolicyRuleMatch{
+					Environment: "prod",
+					Capability:  "metrics",
+					Action:      "get_service_health",
+				},
+			},
+		},
+	}, StaticPolicyEngine{})
+	if err != nil {
+		t.Fatalf("new policy engine: %v", err)
+	}
+	svc := NewServiceWithOptions(ServiceOptions{
+		Policy: policy,
+	})
+
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "metrics",
+		Action:      "get_service_health",
+	})
+	if result.Status != DecisionApprovalRequired {
+		t.Fatalf("expected approval required, got %q", result.Status)
+	}
+	if len(svc.Approvals()) != 1 {
+		t.Fatalf("expected policy approval request")
+	}
+	if len(svc.PolicyRules()) != 1 {
+		t.Fatalf("expected policy rules exposed")
+	}
+}
+
 func TestCallToolAllowsReadAction(t *testing.T) {
 	svc := NewService()
 	result := svc.CallTool(ToolCallRequest{

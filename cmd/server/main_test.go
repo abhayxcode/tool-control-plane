@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -304,6 +306,94 @@ func TestConnectorHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestPolicyConfigHTTPFlow(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "policy.json")
+	err := os.WriteFile(policyPath, []byte(`{
+		"version": 1,
+		"rules": [
+			{
+				"id": "deny-prod-runtime",
+				"effect": "deny",
+				"reason": "Runtime reads blocked during incident.",
+				"match": {
+					"environment": "prod",
+					"capability": "runtime"
+				}
+			}
+		]
+	}`), 0o600)
+	if err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+	config := Config{PolicyFile: policyPath}
+	svc, err := newServiceFromConfig(config)
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	mux := newMux(svc, config)
+
+	policyReq := httptest.NewRequest(http.MethodGet, "/v1/policies", nil)
+	policyResp := httptest.NewRecorder()
+	mux.ServeHTTP(policyResp, policyReq)
+	if policyResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", policyResp.Code)
+	}
+	var policyBody struct {
+		Source        string                    `json:"source"`
+		PolicyFileSet bool                      `json:"policy_file_set"`
+		RuleCount     int                       `json:"rule_count"`
+		Rules         []controlplane.PolicyRule `json:"rules"`
+	}
+	if err := json.NewDecoder(policyResp.Body).Decode(&policyBody); err != nil {
+		t.Fatalf("decode policy body: %v", err)
+	}
+	if policyBody.Source != "file" || !policyBody.PolicyFileSet || policyBody.RuleCount != 1 {
+		t.Fatalf("unexpected policy payload: %#v", policyBody)
+	}
+	if policyBody.Rules[0].ID != "deny-prod-runtime" {
+		t.Fatalf("expected policy rule in response")
+	}
+
+	toolBody := []byte(`{
+		"org_id": "default",
+		"actor_user_id": "local-user",
+		"agent_run_id": "run_123",
+		"service_id": "backend",
+		"environment": "prod",
+		"capability": "runtime",
+		"action": "get_workload_status"
+	}`)
+	toolReq := httptest.NewRequest(http.MethodPost, "/v1/tool-calls", bytes.NewReader(toolBody))
+	toolReq.Header.Set("Content-Type", "application/json")
+	toolResp := httptest.NewRecorder()
+	mux.ServeHTTP(toolResp, toolReq)
+	if toolResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", toolResp.Code)
+	}
+	var toolResult controlplane.ToolCallResponse
+	if err := json.NewDecoder(toolResp.Body).Decode(&toolResult); err != nil {
+		t.Fatalf("decode tool response: %v", err)
+	}
+	if toolResult.Status != controlplane.DecisionDenied {
+		t.Fatalf("expected denied by policy, got %q", toolResult.Status)
+	}
+	if toolResult.Reason != "Runtime reads blocked during incident." {
+		t.Fatalf("unexpected policy reason: %q", toolResult.Reason)
+	}
+}
+
+func TestNewServiceFromConfigRejectsInvalidPolicyFile(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "policy.json")
+	err := os.WriteFile(policyPath, []byte(`{"version":1,"rules":[{"id":"bad","effect":"deny","match":{}}]}`), 0o600)
+	if err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	if _, err := newServiceFromConfig(Config{PolicyFile: policyPath}); err == nil {
+		t.Fatalf("expected invalid policy config error")
+	}
+}
+
 func TestMCPInitializeAndToolList(t *testing.T) {
 	mux := newMux(controlplane.NewService())
 	initReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)))
@@ -427,6 +517,7 @@ func TestMCPResourcesListAndRead(t *testing.T) {
 	}
 	var foundCapabilities bool
 	var foundConnectors bool
+	var foundPolicies bool
 	var foundToolCalls bool
 	var foundAuditExport bool
 	for _, resource := range listBody.Result.Resources {
@@ -435,6 +526,9 @@ func TestMCPResourcesListAndRead(t *testing.T) {
 		}
 		if resource.URI == "tool-control-plane://connectors" {
 			foundConnectors = true
+		}
+		if resource.URI == "tool-control-plane://policies" {
+			foundPolicies = true
 		}
 		if resource.URI == "tool-control-plane://tool-calls" {
 			foundToolCalls = true
@@ -448,6 +542,9 @@ func TestMCPResourcesListAndRead(t *testing.T) {
 	}
 	if !foundConnectors {
 		t.Fatalf("expected connectors resource")
+	}
+	if !foundPolicies {
+		t.Fatalf("expected policies resource")
 	}
 	if !foundToolCalls {
 		t.Fatalf("expected tool calls resource")

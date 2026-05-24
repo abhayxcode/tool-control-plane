@@ -19,6 +19,10 @@ type PolicyEngine interface {
 	Evaluate(req ToolCallRequest, registry CapabilityRegistry) PolicyDecision
 }
 
+type PolicyRuleProvider interface {
+	PolicyRules() []PolicyRule
+}
+
 type StaticPolicyEngine struct{}
 
 func (p StaticPolicyEngine) Evaluate(req ToolCallRequest, registry CapabilityRegistry) PolicyDecision {

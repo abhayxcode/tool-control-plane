@@ -85,6 +85,9 @@ func newMux(svc *controlplane.Service, configs ...Config) *http.ServeMux {
 		}
 		writeJSONStatus(w, http.StatusCreated, connector)
 	})
+	mux.HandleFunc("GET /v1/policies", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, policyPayload(svc, config))
+	})
 	mux.HandleFunc("POST /v1/tool-calls", func(w http.ResponseWriter, r *http.Request) {
 		var req controlplane.ToolCallRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -169,6 +172,19 @@ func auditExportPayload(svc *controlplane.Service) map[string]any {
 	}
 }
 
+func policyPayload(svc *controlplane.Service, config Config) map[string]any {
+	source := "static"
+	if strings.TrimSpace(config.PolicyFile) != "" {
+		source = "file"
+	}
+	return map[string]any{
+		"source":          source,
+		"policy_file_set": strings.TrimSpace(config.PolicyFile) != "",
+		"rule_count":      len(svc.PolicyRules()),
+		"rules":           svc.PolicyRules(),
+	}
+}
+
 func readinessSummary(svc *controlplane.Service, config Config) map[string]any {
 	providerConfig := providerConfigSummary(config)
 	blockers := providerConfigBlockers(config)
@@ -191,6 +207,7 @@ func readinessSummary(svc *controlplane.Service, config Config) map[string]any {
 			"store":                      providerStore(config),
 			"auth_required":              strings.TrimSpace(config.APIToken) != "",
 			"rate_limit_configured":      config.RateLimitPerMinute > 0,
+			"policy":                     policyPayload(svc, config),
 		},
 	}
 }

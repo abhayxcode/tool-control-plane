@@ -18,6 +18,7 @@ type Config struct {
 	RateLimitPerMinute      int
 	Store                   string
 	SQLitePath              string
+	PolicyFile              string
 	CodeProvider            string
 	DeployProvider          string
 	ErrorsProvider          string
@@ -57,6 +58,7 @@ func configFromEnv() (Config, error) {
 		APIToken:                os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"),
 		Store:                   os.Getenv("TOOL_CONTROL_PLANE_STORE"),
 		SQLitePath:              os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
+		PolicyFile:              os.Getenv("TOOL_CONTROL_PLANE_POLICY_FILE"),
 		CodeProvider:            os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
 		DeployProvider:          os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
 		ErrorsProvider:          os.Getenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER"),
@@ -123,6 +125,7 @@ func configFromEnv() (Config, error) {
 
 func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 	registry := controlplane.DefaultCapabilityRegistry()
+	policy := controlplane.PolicyEngine(controlplane.StaticPolicyEngine{})
 	adapters := controlplane.DefaultAdapterRegistry()
 	store := controlplane.Store(controlplane.NewMemoryStore())
 	var githubConfig *controlplane.GitHubAdapterConfig
@@ -203,6 +206,21 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 			Kubernetes: kubernetesConfig,
 		})
 	}
+	if strings.TrimSpace(config.PolicyFile) != "" {
+		data, err := os.ReadFile(config.PolicyFile)
+		if err != nil {
+			return nil, fmt.Errorf("read policy file: %w", err)
+		}
+		policyConfig, err := controlplane.ParsePolicyConfig(data)
+		if err != nil {
+			return nil, err
+		}
+		configuredPolicy, err := controlplane.NewRulePolicyEngine(policyConfig, policy)
+		if err != nil {
+			return nil, err
+		}
+		policy = configuredPolicy
+	}
 	if config.Store == "sqlite" || config.SQLitePath != "" {
 		path := config.SQLitePath
 		if path == "" {
@@ -216,6 +234,7 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 	}
 	return controlplane.NewServiceWithOptions(controlplane.ServiceOptions{
 		Registry: registry,
+		Policy:   policy,
 		Adapters: adapters,
 		Store:    store,
 	}), nil

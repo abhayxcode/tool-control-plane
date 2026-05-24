@@ -88,6 +88,14 @@ func (c *Client) CreateConnector(ctx context.Context, req ConnectorCreateRequest
 	return result, nil
 }
 
+func (c *Client) Policies(ctx context.Context) (PolicyListResponse, error) {
+	var result PolicyListResponse
+	if err := c.do(ctx, http.MethodGet, "/v1/policies", nil, &result); err != nil {
+		return PolicyListResponse{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) CallTool(ctx context.Context, req ToolCallRequest) (ToolCallResponse, error) {
 	var result ToolCallResponse
 	if err := c.do(ctx, http.MethodPost, "/v1/tool-calls", req, &result); err != nil {
