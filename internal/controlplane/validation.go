@@ -60,6 +60,13 @@ func (v StaticRequestValidator) Validate(req ToolCallRequest, definition Capabil
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
 			return fmt.Errorf("github code_host.update_pull_request requires repository or owner and repo arguments")
 		}
+	case "code_host.mark_ready_for_review":
+		if !hasAnyArg(req.Arguments, "pr_number", "number") {
+			return fmt.Errorf("code_host.mark_ready_for_review requires pr_number or number argument")
+		}
+		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
+			return fmt.Errorf("github code_host.mark_ready_for_review requires repository or owner and repo arguments")
+		}
 	case "code_host.get_recent_changes":
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
 			return fmt.Errorf("github code_host.get_recent_changes requires repository or owner and repo arguments")

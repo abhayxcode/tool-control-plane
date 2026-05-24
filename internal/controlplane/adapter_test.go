@@ -542,6 +542,92 @@ func TestGitHubAdapterGetsPullRequest(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapterMarksDraftPRReadyForReview(t *testing.T) {
+	var pullReads int
+	var sawGraphQL bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/backend/pulls/999" {
+			pullReads++
+			draft := "true"
+			if pullReads > 1 {
+				draft = "false"
+			}
+			w.Write([]byte(`{
+				"number": 999,
+				"node_id": "PR_kwDOExample",
+				"title": "Draft: Revert backend database pool config",
+				"state": "open",
+				"html_url": "https://github.com/acme/backend/pull/999",
+				"draft": ` + draft + `,
+				"merged": false,
+				"head": {
+					"ref": "majdoor/revert-db-pool-config",
+					"sha": "head-sha-999"
+				},
+				"base": {
+					"ref": "main"
+				}
+			}`))
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/graphql" {
+			sawGraphQL = true
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode graphQL payload: %v", err)
+			}
+			variables, ok := payload["variables"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected variables object")
+			}
+			if variables["pullRequestId"] != "PR_kwDOExample" {
+				t.Fatalf("unexpected pullRequestId: %#v", variables["pullRequestId"])
+			}
+			w.Write([]byte(`{"data":{"markPullRequestReadyForReview":{"pullRequest":{"number":999,"isDraft":false,"url":"https://github.com/acme/backend/pull/999"}}}}`))
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "code_host.mark_ready_for_review",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"pr_number":  999,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected ready-for-review result, got error: %v", err)
+	}
+	if !sawGraphQL {
+		t.Fatalf("expected GraphQL ready-for-review mutation")
+	}
+	if pullReads != 2 {
+		t.Fatalf("expected initial and refreshed PR reads, got %d", pullReads)
+	}
+	if result["ready_for_review"] != true {
+		t.Fatalf("expected ready_for_review true, got %#v", result["ready_for_review"])
+	}
+	if result["draft"] != false {
+		t.Fatalf("expected draft false, got %#v", result["draft"])
+	}
+	if result["base"] != "main" {
+		t.Fatalf("expected base branch, got %#v", result["base"])
+	}
+	if result["head_sha"] != "head-sha-999" {
+		t.Fatalf("expected head SHA, got %#v", result["head_sha"])
+	}
+}
+
 func TestGitHubAdapterCreatesBranchFilesAndDraftPR(t *testing.T) {
 	var createdBranch bool
 	var wroteFile bool
@@ -1044,6 +1130,7 @@ func TestGitHubProviderOverridesCodeAndCICapabilities(t *testing.T) {
 		"code_host.get_pull_request",
 		"code_host.create_draft_pr",
 		"code_host.update_pull_request",
+		"code_host.mark_ready_for_review",
 		"ci.get_checks",
 		"ci.get_logs",
 	} {

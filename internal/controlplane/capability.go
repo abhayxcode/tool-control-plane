@@ -99,6 +99,14 @@ func DefaultCapabilityRegistry() CapabilityRegistry {
 			Description: "Update an existing pull request branch and optionally add a comment.",
 		},
 		{
+			ID:          "code_host.mark_ready_for_review",
+			Capability:  "code_host",
+			Action:      "mark_ready_for_review",
+			RiskLevel:   RiskWriteLow,
+			Provider:    "mock",
+			Description: "Mark a draft pull request ready for review after caller-side gates pass.",
+		},
+		{
 			ID:          "code_host.get_recent_changes",
 			Capability:  "code_host",
 			Action:      "get_recent_changes",

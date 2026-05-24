@@ -20,6 +20,7 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	var foundDraftPR bool
 	var foundGetFile bool
 	var foundGetPullRequest bool
+	var foundReadyForReview bool
 	for _, detail := range details {
 		if detail.ID == "code_host.create_draft_pr" {
 			foundDraftPR = true
@@ -42,6 +43,12 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 				t.Fatalf("expected get pull request risk %q, got %q", RiskRead, detail.RiskLevel)
 			}
 		}
+		if detail.ID == "code_host.mark_ready_for_review" {
+			foundReadyForReview = true
+			if detail.RiskLevel != RiskWriteLow {
+				t.Fatalf("expected ready-for-review risk %q, got %q", RiskWriteLow, detail.RiskLevel)
+			}
+		}
 	}
 	if !foundDraftPR {
 		t.Fatalf("expected draft PR capability metadata")
@@ -51,6 +58,9 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	}
 	if !foundGetPullRequest {
 		t.Fatalf("expected get pull request capability metadata")
+	}
+	if !foundReadyForReview {
+		t.Fatalf("expected mark ready for review capability metadata")
 	}
 }
 
@@ -621,5 +631,31 @@ func TestCallToolAllowsCodeHostGetPullRequestReadAction(t *testing.T) {
 	}
 	if result.Result["merged"] != false {
 		t.Fatalf("expected unmerged PR, got %#v", result.Result["merged"])
+	}
+}
+
+func TestCallToolAllowsCodeHostReadyForReviewWriteAction(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "code_host",
+		Action:      "mark_ready_for_review",
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"pr_number":  999,
+		},
+	})
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %q (%s)", result.Status, result.Reason)
+	}
+	if result.RiskLevel != "write_low" {
+		t.Fatalf("expected write_low risk, got %q", result.RiskLevel)
+	}
+	if result.Result["ready_for_review"] != true {
+		t.Fatalf("expected ready_for_review true, got %#v", result.Result["ready_for_review"])
 	}
 }

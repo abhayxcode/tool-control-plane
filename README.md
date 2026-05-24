@@ -61,6 +61,7 @@ GitHub adapter:
 - `code_host.get_pull_request` is implemented against GitHub pull request details and returns merge state plus head/base metadata
 - `code_host.create_draft_pr` is implemented against GitHub pull request creation; when `files` are provided it creates the head branch from the base branch and upserts file contents before opening the PR
 - `code_host.update_pull_request` is implemented against an existing GitHub pull request; when `files` are provided it writes to the PR head branch and can add a PR comment
+- `code_host.mark_ready_for_review` is implemented against GitHub GraphQL and converts an existing draft pull request to ready-for-review
 - `ci.get_checks` is implemented against GitHub REST check runs
 - `ci.get_checks` also attempts to discover the failed GitHub Actions job and includes `job_id`/`logs_url` when available
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
@@ -139,6 +140,14 @@ It returns PR metadata including `pr_number`, `repository`, `branch`, `base`, `h
 - optional `reviewers`, `team_reviewers`, and `labels` to refresh PR routing
 
 It returns updated PR metadata including `pr_number`, `repository`, `branch`, `base`, `head_sha`, `url`, `source_url`, `comment_url`, and best-effort routing metadata when available.
+
+`code_host.mark_ready_for_review` accepts:
+
+- `repository`: `owner/repo`
+- or `owner` and `repo`
+- `pr_number` or `number`
+
+It returns updated PR metadata including `pr_number`, `repository`, `state`, `merged`, `branch`, `base`, `head_sha`, `url`, `source_url`, `draft`, and `ready_for_review`. Callers should enforce their own policy gates before invoking this write action, for example “CI passed” plus explicit human approval.
 
 `ci.get_checks` accepts either:
 

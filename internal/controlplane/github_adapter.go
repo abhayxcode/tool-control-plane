@@ -89,11 +89,62 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 		return a.createDraftPR(req)
 	case "code_host.update_pull_request":
 		return a.updatePullRequest(req)
+	case "code_host.mark_ready_for_review":
+		return a.markReadyForReview(req)
 	case "deploy.get_recent_deploys":
 		return a.getRecentDeploys(req)
 	default:
 		return nil, fmt.Errorf("github adapter does not support capability '%s'", definition.ID)
 	}
+}
+
+func (a GitHubAdapter) markReadyForReview(req ToolCallRequest) (map[string]any, error) {
+	owner, repo, err := githubRepoArgs("code_host.mark_ready_for_review", req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	prNumber, err := intArgAny(req.Arguments, "pr_number", "number")
+	if err != nil {
+		return nil, fmt.Errorf("github code_host.mark_ready_for_review requires pr_number or number argument")
+	}
+
+	pullPath := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), prNumber)
+	var pull githubPullDetailResponse
+	if err := a.getJSON(pullPath, &pull); err != nil {
+		return nil, err
+	}
+	if pull.Number == 0 {
+		pull.Number = prNumber
+	}
+	if pull.Draft {
+		if pull.NodeID == "" {
+			return nil, fmt.Errorf("github pull request #%d did not include node_id required for ready-for-review mutation", prNumber)
+		}
+		payload := map[string]any{
+			"query": `mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+  markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+    pullRequest { number isDraft url }
+  }
+}`,
+			"variables": map[string]any{"pullRequestId": pull.NodeID},
+		}
+		var mutation githubGraphQLResponse
+		if err := a.postJSON("/graphql", payload, &mutation); err != nil {
+			return nil, err
+		}
+		if len(mutation.Errors) > 0 {
+			return nil, fmt.Errorf("github ready-for-review mutation failed: %s", mutation.Errors[0].Message)
+		}
+
+		var refreshed githubPullDetailResponse
+		if err := a.getJSON(pullPath, &refreshed); err == nil && refreshed.Number != 0 {
+			pull = refreshed
+		} else {
+			pull.Draft = false
+		}
+	}
+
+	return githubPullReadyResult(owner, repo, prNumber, pull), nil
 }
 
 func (a GitHubAdapter) updatePullRequest(req ToolCallRequest) (map[string]any, error) {
@@ -1379,6 +1430,7 @@ type githubIssueCommentResponse struct {
 
 type githubPullDetailResponse struct {
 	Number         int    `json:"number"`
+	NodeID         string `json:"node_id"`
 	Title          string `json:"title"`
 	State          string `json:"state"`
 	HTMLURL        string `json:"html_url"`
@@ -1395,6 +1447,40 @@ type githubPullDetailResponse struct {
 	} `json:"base"`
 }
 
+type githubGraphQLResponse struct {
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+func githubPullReadyResult(owner string, repo string, prNumber int, pull githubPullDetailResponse) map[string]any {
+	number := pull.Number
+	if number == 0 {
+		number = prNumber
+	}
+	branch := pull.Head.Ref
+	return map[string]any{
+		"pr_number":        number,
+		"repository":       fmt.Sprintf("%s/%s", owner, repo),
+		"owner":            owner,
+		"repo":             repo,
+		"state":            pull.State,
+		"merged":           pull.Merged,
+		"merged_at":        pull.MergedAt,
+		"merge_commit_sha": pull.MergeCommitSHA,
+		"branch":           branch,
+		"head":             branch,
+		"base":             pull.Base.Ref,
+		"head_sha":         pull.Head.SHA,
+		"title":            pull.Title,
+		"url":              pull.HTMLURL,
+		"source_url":       pull.HTMLURL,
+		"draft":            pull.Draft,
+		"ready_for_review": !pull.Draft,
+		"evidence":         fmt.Sprintf("GitHub PR #%d for %s/%s is ready_for_review=%t.", number, owner, repo, !pull.Draft),
+	}
+}
+
 func (a GitHubAdapter) BaseURL() string {
 	return a.baseURL
 }
@@ -1405,13 +1491,14 @@ func (a GitHubAdapter) HTTPClient() *http.Client {
 
 func GitHubProviderOverrides() map[string]string {
 	return map[string]string{
-		"code_host.get_recent_changes":  GitHubProvider,
-		"code_host.get_file":            GitHubProvider,
-		"code_host.get_pull_request":    GitHubProvider,
-		"code_host.create_draft_pr":     GitHubProvider,
-		"code_host.update_pull_request": GitHubProvider,
-		"ci.get_checks":                 GitHubProvider,
-		"ci.get_logs":                   GitHubProvider,
+		"code_host.get_recent_changes":    GitHubProvider,
+		"code_host.get_file":              GitHubProvider,
+		"code_host.get_pull_request":      GitHubProvider,
+		"code_host.create_draft_pr":       GitHubProvider,
+		"code_host.update_pull_request":   GitHubProvider,
+		"code_host.mark_ready_for_review": GitHubProvider,
+		"ci.get_checks":                   GitHubProvider,
+		"ci.get_logs":                     GitHubProvider,
 	}
 }
 
