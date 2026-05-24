@@ -103,28 +103,46 @@ func connectorPublicConfig(config Config, capability string, provider string) ma
 func connectorSecretRef(config Config, provider string) string {
 	switch provider {
 	case controlplane.GitHubProvider:
-		if strings.TrimSpace(config.GitHubToken) != "" {
-			return "env:GITHUB_TOKEN"
+		if ref := configuredSecretRef(config.GitHubTokenRef, "GITHUB_TOKEN", config.GitHubToken); ref != "" {
+			return ref
 		}
 		if githubAppConfigured(config) {
-			return "env:GITHUB_APP_PRIVATE_KEY"
+			if strings.TrimSpace(config.GitHubAppPrivateKeyRef) != "" {
+				return strings.TrimSpace(config.GitHubAppPrivateKeyRef)
+			}
+			if strings.TrimSpace(config.GitHubAppPrivateKeyPath) != "" {
+				return controlplane.SecretRefFilePrefix + strings.TrimSpace(config.GitHubAppPrivateKeyPath)
+			}
+			if strings.TrimSpace(config.GitHubAppPrivateKey) != "" {
+				return controlplane.SecretRefEnvPrefix + "GITHUB_APP_PRIVATE_KEY"
+			}
 		}
 	case controlplane.SentryProvider:
-		if strings.TrimSpace(config.SentryAuthToken) != "" {
-			return "env:SENTRY_AUTH_TOKEN"
+		if ref := configuredSecretRef(config.SentryAuthTokenRef, "SENTRY_AUTH_TOKEN", config.SentryAuthToken); ref != "" {
+			return ref
 		}
 	case controlplane.PrometheusProvider:
-		if strings.TrimSpace(config.PrometheusBearerToken) != "" {
-			return "env:PROMETHEUS_BEARER_TOKEN"
+		if ref := configuredSecretRef(config.PrometheusBearerTokenRef, "PROMETHEUS_BEARER_TOKEN", config.PrometheusBearerToken); ref != "" {
+			return ref
 		}
 	case controlplane.KubernetesProvider:
-		if strings.TrimSpace(config.KubernetesBearerToken) != "" {
-			return "env:KUBERNETES_BEARER_TOKEN"
+		if ref := configuredSecretRef(config.KubernetesBearerTokenRef, "KUBERNETES_BEARER_TOKEN", config.KubernetesBearerToken); ref != "" {
+			return ref
 		}
 	case controlplane.GenericHTTPProvider:
-		if strings.TrimSpace(config.GenericHTTPBearerToken) != "" {
-			return "env:GENERIC_HTTP_BEARER_TOKEN"
+		if ref := configuredSecretRef(config.GenericHTTPBearerTokenRef, "GENERIC_HTTP_BEARER_TOKEN", config.GenericHTTPBearerToken); ref != "" {
+			return ref
 		}
+	}
+	return ""
+}
+
+func configuredSecretRef(ref string, envName string, value string) string {
+	if strings.TrimSpace(ref) != "" {
+		return strings.TrimSpace(ref)
+	}
+	if strings.TrimSpace(value) != "" {
+		return controlplane.SecretRefEnvPrefix + envName
 	}
 	return ""
 }

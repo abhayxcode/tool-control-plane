@@ -306,6 +306,70 @@ func TestConnectorHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestConfiguredConnectorsPreferExplicitSecretRefs(t *testing.T) {
+	connectors := configuredConnectors(Config{
+		CodeProvider:                controlplane.GitHubProvider,
+		GitHubToken:                 "resolved-token",
+		GitHubTokenRef:              "file:/run/secrets/github-token",
+		MetricsProvider:             controlplane.PrometheusProvider,
+		PrometheusBearerToken:       "resolved-prom-token",
+		PrometheusBearerTokenRef:    "env:PROM_TOKEN_REF",
+		RuntimeProvider:             controlplane.KubernetesProvider,
+		KubernetesBearerToken:       "resolved-kube-token",
+		KubernetesBearerTokenRef:    "file:/run/secrets/kube-token",
+		InternalAPIProvider:         controlplane.GenericHTTPProvider,
+		GenericHTTPBaseURL:          "https://internal.example",
+		GenericHTTPBearerToken:      "resolved-http-token",
+		GenericHTTPBearerTokenRef:   "env:GENERIC_HTTP_TOKEN_REF",
+		GitHubAppPrivateKeyPath:     "/run/secrets/github-app-key.pem",
+		GitHubAppID:                 "12345",
+		GitHubAppInstallationID:     "42",
+		SentryAuthToken:             "resolved-sentry-token",
+		SentryAuthTokenRef:          "env:SENTRY_TOKEN_REF",
+		ErrorsProvider:              controlplane.SentryProvider,
+		PrometheusBaseURL:           "https://prometheus.example",
+		KubernetesBaseURL:           "https://kubernetes.example",
+		GenericHTTPAllowedMethods:   []string{http.MethodGet},
+		GenericHTTPMaxResponseBytes: 1024,
+	})
+
+	expected := map[string]string{
+		"code_host":    "file:/run/secrets/github-token",
+		"errors":       "env:SENTRY_TOKEN_REF",
+		"metrics":      "env:PROM_TOKEN_REF",
+		"runtime":      "file:/run/secrets/kube-token",
+		"internal_api": "env:GENERIC_HTTP_TOKEN_REF",
+	}
+	for _, connector := range connectors {
+		ref, ok := expected[connector.Capability]
+		if !ok {
+			continue
+		}
+		if connector.SecretRef != ref {
+			t.Fatalf("expected %s secret ref %q, got %q", connector.Capability, ref, connector.SecretRef)
+		}
+	}
+}
+
+func TestConfiguredConnectorUsesGitHubAppFileSecretRef(t *testing.T) {
+	connectors := configuredConnectors(Config{
+		CodeProvider:            controlplane.GitHubProvider,
+		GitHubAppID:             "12345",
+		GitHubAppInstallationID: "42",
+		GitHubAppPrivateKeyPath: "/run/secrets/github-app-key.pem",
+	})
+
+	for _, connector := range connectors {
+		if connector.Capability == "code_host" && connector.Provider == controlplane.GitHubProvider {
+			if connector.SecretRef != "file:/run/secrets/github-app-key.pem" {
+				t.Fatalf("unexpected GitHub App secret ref: %q", connector.SecretRef)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected GitHub code connector")
+}
+
 func TestPolicyConfigHTTPFlow(t *testing.T) {
 	policyPath := filepath.Join(t.TempDir(), "policy.json")
 	err := os.WriteFile(policyPath, []byte(`{
@@ -863,6 +927,9 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.APIToken != "secret-token" {
 		t.Fatalf("unexpected API token")
 	}
+	if config.APITokenRef != "env:TOOL_CONTROL_PLANE_API_TOKEN" {
+		t.Fatalf("unexpected API token ref: %q", config.APITokenRef)
+	}
 	if config.RateLimitPerMinute != 12 {
 		t.Fatalf("unexpected rate limit: %d", config.RateLimitPerMinute)
 	}
@@ -875,17 +942,32 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.MetricsProvider != "prometheus" || config.RuntimeProvider != "kubernetes" || config.DocsProvider != "github" || config.InternalAPIProvider != "generic_http" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
 	}
+	if config.GitHubTokenRef != "env:GITHUB_TOKEN" {
+		t.Fatalf("unexpected GitHub token ref: %q", config.GitHubTokenRef)
+	}
 	if config.SentryAuthToken != "sentry-token" || config.SentryOrg != "acme" || config.SentryProject != "backend" || config.SentryBaseURL != "https://sentry.example" {
 		t.Fatalf("unexpected Sentry config")
+	}
+	if config.SentryAuthTokenRef != "env:SENTRY_AUTH_TOKEN" {
+		t.Fatalf("unexpected Sentry token ref: %q", config.SentryAuthTokenRef)
 	}
 	if config.PrometheusBaseURL != "https://prometheus.example" || config.PrometheusBearerToken != "prometheus-token" || config.PrometheusServiceLabel != "app" || config.PrometheusEnvLabel != "env" || config.PrometheusStatusLabel != "code" {
 		t.Fatalf("unexpected Prometheus config")
 	}
+	if config.PrometheusBearerTokenRef != "env:PROMETHEUS_BEARER_TOKEN" {
+		t.Fatalf("unexpected Prometheus token ref: %q", config.PrometheusBearerTokenRef)
+	}
 	if config.KubernetesBaseURL != "https://kubernetes.example" || config.KubernetesBearerToken != "kubernetes-token" || config.KubernetesNamespace != "prod" || config.KubernetesLabelSelector != "app=backend" || config.KubernetesServiceLabel != "app" || config.KubernetesEnvLabel != "env" {
 		t.Fatalf("unexpected Kubernetes config")
 	}
+	if config.KubernetesBearerTokenRef != "env:KUBERNETES_BEARER_TOKEN" {
+		t.Fatalf("unexpected Kubernetes token ref: %q", config.KubernetesBearerTokenRef)
+	}
 	if config.GenericHTTPBaseURL != "https://internal.example" || config.GenericHTTPBearerToken != "internal-token" || len(config.GenericHTTPAllowedMethods) != 2 || config.GenericHTTPAllowedMethods[0] != "GET" || config.GenericHTTPAllowedMethods[1] != "POST" {
 		t.Fatalf("unexpected generic HTTP config")
+	}
+	if config.GenericHTTPBearerTokenRef != "env:GENERIC_HTTP_BEARER_TOKEN" {
+		t.Fatalf("unexpected generic HTTP token ref: %q", config.GenericHTTPBearerTokenRef)
 	}
 	if config.GenericHTTPTimeout != 3*time.Second || config.GenericHTTPMaxResponseBytes != 12345 {
 		t.Fatalf("unexpected generic HTTP limits")
@@ -893,8 +975,91 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.GitHubAppID != "12345" || config.GitHubAppInstallationID != "42" || config.GitHubAppPrivateKey != "line1\nline2" {
 		t.Fatalf("unexpected GitHub App config")
 	}
+	if config.GitHubAppPrivateKeyRef != "env:GITHUB_APP_PRIVATE_KEY" {
+		t.Fatalf("unexpected GitHub App private key ref: %q", config.GitHubAppPrivateKeyRef)
+	}
 	if config.GitHubMaxAttempts != 4 || config.GitHubRetryBackoff != 25*time.Millisecond {
 		t.Fatalf("unexpected GitHub retry config")
+	}
+	if config.SecretBroker == nil {
+		t.Fatalf("expected secret broker")
+	}
+}
+
+func TestConfigFromEnvResolvesSecretRefs(t *testing.T) {
+	dir := t.TempDir()
+	githubTokenPath := filepath.Join(dir, "github-token")
+	if err := os.WriteFile(githubTokenPath, []byte("github-from-file\n"), 0o600); err != nil {
+		t.Fatalf("write github token file: %v", err)
+	}
+	genericTokenPath := filepath.Join(dir, "generic-token")
+	if err := os.WriteFile(genericTokenPath, []byte("generic-from-file\r\n"), 0o600); err != nil {
+		t.Fatalf("write generic token file: %v", err)
+	}
+	privateKeyPath := filepath.Join(dir, "github-app-key")
+	if err := os.WriteFile(privateKeyPath, []byte("line1\\nline2\n"), 0o600); err != nil {
+		t.Fatalf("write github app key file: %v", err)
+	}
+
+	t.Setenv("TOOL_CONTROL_PLANE_API_TOKEN_REF", "env:TCP_TEST_API_TOKEN")
+	t.Setenv("TCP_TEST_API_TOKEN", "api-from-ref")
+	t.Setenv("GITHUB_TOKEN_REF", "file:"+githubTokenPath)
+	t.Setenv("GITHUB_APP_PRIVATE_KEY_REF", "file:"+privateKeyPath)
+	t.Setenv("SENTRY_AUTH_TOKEN_REF", "env:TCP_TEST_SENTRY_TOKEN")
+	t.Setenv("TCP_TEST_SENTRY_TOKEN", "sentry-from-ref")
+	t.Setenv("GENERIC_HTTP_BEARER_TOKEN_REF", "file:"+genericTokenPath)
+
+	config, err := configFromEnv()
+	if err != nil {
+		t.Fatalf("config from env: %v", err)
+	}
+	if config.APIToken != "api-from-ref" || config.APITokenRef != "env:TCP_TEST_API_TOKEN" {
+		t.Fatalf("unexpected API token ref resolution")
+	}
+	if config.GitHubToken != "github-from-file" || config.GitHubTokenRef != "file:"+githubTokenPath {
+		t.Fatalf("unexpected GitHub token ref resolution")
+	}
+	if config.GitHubAppPrivateKey != "line1\nline2" || config.GitHubAppPrivateKeyRef != "file:"+privateKeyPath {
+		t.Fatalf("unexpected GitHub app key ref resolution")
+	}
+	if config.SentryAuthToken != "sentry-from-ref" || config.SentryAuthTokenRef != "env:TCP_TEST_SENTRY_TOKEN" {
+		t.Fatalf("unexpected Sentry token ref resolution")
+	}
+	if config.GenericHTTPBearerToken != "generic-from-file" || config.GenericHTTPBearerTokenRef != "file:"+genericTokenPath {
+		t.Fatalf("unexpected generic HTTP token ref resolution")
+	}
+}
+
+func TestConfigFromEnvRejectsInvalidSecretRef(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN_REF", "vault:missing")
+	if _, err := configFromEnv(); err == nil {
+		t.Fatalf("expected invalid secret ref error")
+	}
+
+	t.Setenv("GITHUB_TOKEN_REF", "env:TCP_TEST_EMPTY_SECRET")
+	if _, err := configFromEnv(); err == nil {
+		t.Fatalf("expected empty resolved secret ref error")
+	}
+}
+
+func TestGitHubAppPrivateKeyResolvesCustomSecretBrokerRef(t *testing.T) {
+	config := Config{
+		GitHubAppID:             "12345",
+		GitHubAppInstallationID: "42",
+		GitHubAppPrivateKeyRef:  "vault:github-app-key",
+		SecretBroker: controlplane.StaticSecretBroker{
+			"vault:github-app-key": "line1\\nline2",
+		},
+	}
+	if !githubAppConfigured(config) {
+		t.Fatalf("expected GitHub App config to accept custom private key refs")
+	}
+	value, err := githubAppPrivateKey(config)
+	if err != nil {
+		t.Fatalf("resolve github app private key: %v", err)
+	}
+	if value != "line1\nline2" {
+		t.Fatalf("unexpected private key value: %q", value)
 	}
 }
 
@@ -999,6 +1164,9 @@ func TestCapabilitiesExposeProviderConfigReadiness(t *testing.T) {
 	}
 	if body.ProviderConfig["store"] != "sqlite" {
 		t.Fatalf("expected sqlite store, got %#v", body.ProviderConfig["store"])
+	}
+	if body.ProviderConfig["secret_broker"] != "local" {
+		t.Fatalf("expected local secret broker, got %#v", body.ProviderConfig["secret_broker"])
 	}
 }
 

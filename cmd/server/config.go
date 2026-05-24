@@ -15,6 +15,7 @@ type Config struct {
 	Addr                        string
 	ShutdownTimeout             time.Duration
 	APIToken                    string
+	APITokenRef                 string
 	RateLimitPerMinute          int
 	Store                       string
 	SQLitePath                  string
@@ -27,41 +28,78 @@ type Config struct {
 	DocsProvider                string
 	InternalAPIProvider         string
 	GitHubToken                 string
+	GitHubTokenRef              string
 	GitHubAppID                 string
 	GitHubAppInstallationID     string
 	GitHubAppPrivateKey         string
+	GitHubAppPrivateKeyRef      string
 	GitHubAppPrivateKeyPath     string
 	GitHubBaseURL               string
 	GitHubMaxAttempts           int
 	GitHubRetryBackoff          time.Duration
 	SentryAuthToken             string
+	SentryAuthTokenRef          string
 	SentryOrg                   string
 	SentryProject               string
 	SentryBaseURL               string
 	PrometheusBaseURL           string
 	PrometheusBearerToken       string
+	PrometheusBearerTokenRef    string
 	PrometheusServiceLabel      string
 	PrometheusEnvLabel          string
 	PrometheusStatusLabel       string
 	KubernetesBaseURL           string
 	KubernetesBearerToken       string
+	KubernetesBearerTokenRef    string
 	KubernetesNamespace         string
 	KubernetesLabelSelector     string
 	KubernetesServiceLabel      string
 	KubernetesEnvLabel          string
 	GenericHTTPBaseURL          string
 	GenericHTTPBearerToken      string
+	GenericHTTPBearerTokenRef   string
 	GenericHTTPAllowedMethods   []string
 	GenericHTTPTimeout          time.Duration
 	GenericHTTPMaxResponseBytes int
 	DemoRepository              string
+	SecretBroker                controlplane.SecretBroker
 }
 
 func configFromEnv() (Config, error) {
+	broker := controlplane.LocalSecretBroker{}
+	apiToken, apiTokenRef, err := secretFromEnv(broker, "TOOL_CONTROL_PLANE_API_TOKEN", "TOOL_CONTROL_PLANE_API_TOKEN_REF")
+	if err != nil {
+		return Config{}, err
+	}
+	githubToken, githubTokenRef, err := secretFromEnv(broker, "GITHUB_TOKEN", "GITHUB_TOKEN_REF")
+	if err != nil {
+		return Config{}, err
+	}
+	githubAppPrivateKey, githubAppPrivateKeyRef, err := secretFromEnv(broker, "GITHUB_APP_PRIVATE_KEY", "GITHUB_APP_PRIVATE_KEY_REF")
+	if err != nil {
+		return Config{}, err
+	}
+	sentryAuthToken, sentryAuthTokenRef, err := secretFromEnv(broker, "SENTRY_AUTH_TOKEN", "SENTRY_AUTH_TOKEN_REF")
+	if err != nil {
+		return Config{}, err
+	}
+	prometheusBearerToken, prometheusBearerTokenRef, err := secretFromEnv(broker, "PROMETHEUS_BEARER_TOKEN", "PROMETHEUS_BEARER_TOKEN_REF")
+	if err != nil {
+		return Config{}, err
+	}
+	kubernetesBearerToken, kubernetesBearerTokenRef, err := secretFromEnv(broker, "KUBERNETES_BEARER_TOKEN", "KUBERNETES_BEARER_TOKEN_REF")
+	if err != nil {
+		return Config{}, err
+	}
+	genericHTTPBearerToken, genericHTTPBearerTokenRef, err := secretFromEnv(broker, "GENERIC_HTTP_BEARER_TOKEN", "GENERIC_HTTP_BEARER_TOKEN_REF")
+	if err != nil {
+		return Config{}, err
+	}
 	config := Config{
 		Addr:                      envOrDefault("TOOL_CONTROL_PLANE_ADDR", ":4100"),
 		ShutdownTimeout:           10 * time.Second,
-		APIToken:                  os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"),
+		APIToken:                  apiToken,
+		APITokenRef:               apiTokenRef,
 		Store:                     os.Getenv("TOOL_CONTROL_PLANE_STORE"),
 		SQLitePath:                os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
 		PolicyFile:                os.Getenv("TOOL_CONTROL_PLANE_POLICY_FILE"),
@@ -72,31 +110,38 @@ func configFromEnv() (Config, error) {
 		RuntimeProvider:           os.Getenv("TOOL_CONTROL_PLANE_RUNTIME_PROVIDER"),
 		DocsProvider:              os.Getenv("TOOL_CONTROL_PLANE_DOCS_PROVIDER"),
 		InternalAPIProvider:       os.Getenv("TOOL_CONTROL_PLANE_INTERNAL_API_PROVIDER"),
-		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
+		GitHubToken:               githubToken,
+		GitHubTokenRef:            githubTokenRef,
 		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
 		GitHubAppInstallationID:   os.Getenv("GITHUB_APP_INSTALLATION_ID"),
-		GitHubAppPrivateKey:       normalizeGitHubAppPrivateKey(os.Getenv("GITHUB_APP_PRIVATE_KEY")),
+		GitHubAppPrivateKey:       normalizeGitHubAppPrivateKey(githubAppPrivateKey),
+		GitHubAppPrivateKeyRef:    githubAppPrivateKeyRef,
 		GitHubAppPrivateKeyPath:   os.Getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
 		GitHubBaseURL:             os.Getenv("GITHUB_API_BASE_URL"),
-		SentryAuthToken:           os.Getenv("SENTRY_AUTH_TOKEN"),
+		SentryAuthToken:           sentryAuthToken,
+		SentryAuthTokenRef:        sentryAuthTokenRef,
 		SentryOrg:                 os.Getenv("SENTRY_ORG"),
 		SentryProject:             os.Getenv("SENTRY_PROJECT"),
 		SentryBaseURL:             os.Getenv("SENTRY_BASE_URL"),
 		PrometheusBaseURL:         os.Getenv("PROMETHEUS_BASE_URL"),
-		PrometheusBearerToken:     os.Getenv("PROMETHEUS_BEARER_TOKEN"),
+		PrometheusBearerToken:     prometheusBearerToken,
+		PrometheusBearerTokenRef:  prometheusBearerTokenRef,
 		PrometheusServiceLabel:    os.Getenv("PROMETHEUS_SERVICE_LABEL"),
 		PrometheusEnvLabel:        os.Getenv("PROMETHEUS_ENVIRONMENT_LABEL"),
 		PrometheusStatusLabel:     os.Getenv("PROMETHEUS_STATUS_LABEL"),
 		KubernetesBaseURL:         os.Getenv("KUBERNETES_BASE_URL"),
-		KubernetesBearerToken:     os.Getenv("KUBERNETES_BEARER_TOKEN"),
+		KubernetesBearerToken:     kubernetesBearerToken,
+		KubernetesBearerTokenRef:  kubernetesBearerTokenRef,
 		KubernetesNamespace:       os.Getenv("KUBERNETES_NAMESPACE"),
 		KubernetesLabelSelector:   os.Getenv("KUBERNETES_LABEL_SELECTOR"),
 		KubernetesServiceLabel:    os.Getenv("KUBERNETES_SERVICE_LABEL"),
 		KubernetesEnvLabel:        os.Getenv("KUBERNETES_ENVIRONMENT_LABEL"),
 		GenericHTTPBaseURL:        os.Getenv("GENERIC_HTTP_BASE_URL"),
-		GenericHTTPBearerToken:    os.Getenv("GENERIC_HTTP_BEARER_TOKEN"),
+		GenericHTTPBearerToken:    genericHTTPBearerToken,
+		GenericHTTPBearerTokenRef: genericHTTPBearerTokenRef,
 		GenericHTTPAllowedMethods: parseCSVEnv(os.Getenv("GENERIC_HTTP_ALLOWED_METHODS")),
 		DemoRepository:            os.Getenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY"),
+		SecretBroker:              broker,
 	}
 	rawShutdownTimeout := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT"))
 	if rawShutdownTimeout != "" {
@@ -284,6 +329,32 @@ func newHandler(config Config, svc *controlplane.Service) http.Handler {
 	return withRequestLogging(withRateLimit(withBearerAuth(newMux(svc, config), config.APIToken), newRateLimiter(config.RateLimitPerMinute, time.Minute)))
 }
 
+func secretBrokerFromConfig(config Config) controlplane.SecretBroker {
+	if config.SecretBroker != nil {
+		return config.SecretBroker
+	}
+	return controlplane.LocalSecretBroker{}
+}
+
+func secretFromEnv(broker controlplane.SecretBroker, valueKey string, refKey string) (string, string, error) {
+	ref := strings.TrimSpace(os.Getenv(refKey))
+	if ref != "" {
+		value, err := broker.ResolveSecret(ref)
+		if err != nil {
+			return "", "", fmt.Errorf("resolve %s: %w", refKey, err)
+		}
+		if strings.TrimSpace(value) == "" {
+			return "", "", fmt.Errorf("resolve %s: secret ref %q resolved empty", refKey, ref)
+		}
+		return value, ref, nil
+	}
+	value := os.Getenv(valueKey)
+	if strings.TrimSpace(value) == "" {
+		return value, "", nil
+	}
+	return value, controlplane.SecretRefEnvPrefix + valueKey, nil
+}
+
 func envOrDefault(key string, fallback string) string {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -327,22 +398,31 @@ func githubTokenSourceFromConfig(config Config, client *http.Client) (controlpla
 func githubAppConfigured(config Config) bool {
 	return strings.TrimSpace(config.GitHubAppID) != "" &&
 		strings.TrimSpace(config.GitHubAppInstallationID) != "" &&
-		(strings.TrimSpace(config.GitHubAppPrivateKey) != "" || strings.TrimSpace(config.GitHubAppPrivateKeyPath) != "")
+		(strings.TrimSpace(config.GitHubAppPrivateKey) != "" ||
+			strings.TrimSpace(config.GitHubAppPrivateKeyRef) != "" ||
+			strings.TrimSpace(config.GitHubAppPrivateKeyPath) != "")
 }
 
 func githubAppPrivateKey(config Config) (string, error) {
 	if strings.TrimSpace(config.GitHubAppPrivateKey) != "" {
 		return normalizeGitHubAppPrivateKey(config.GitHubAppPrivateKey), nil
 	}
+	if strings.TrimSpace(config.GitHubAppPrivateKeyRef) != "" {
+		value, err := secretBrokerFromConfig(config).ResolveSecret(config.GitHubAppPrivateKeyRef)
+		if err != nil {
+			return "", fmt.Errorf("resolve GITHUB_APP_PRIVATE_KEY_REF: %w", err)
+		}
+		return normalizeGitHubAppPrivateKey(value), nil
+	}
 	path := strings.TrimSpace(config.GitHubAppPrivateKeyPath)
 	if path == "" {
 		return "", nil
 	}
-	content, err := os.ReadFile(path)
+	content, err := secretBrokerFromConfig(config).ResolveSecret(controlplane.SecretRefFilePrefix + path)
 	if err != nil {
 		return "", fmt.Errorf("read GITHUB_APP_PRIVATE_KEY_PATH: %w", err)
 	}
-	return normalizeGitHubAppPrivateKey(string(content)), nil
+	return normalizeGitHubAppPrivateKey(content), nil
 }
 
 func normalizeGitHubAppPrivateKey(value string) string {

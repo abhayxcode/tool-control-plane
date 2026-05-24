@@ -272,6 +272,7 @@ func providerConfigSummary(config Config) map[string]any {
 		"generic_http_timeout_ms":         int(genericHTTPTimeout(config) / time.Millisecond),
 		"generic_http_max_response_bytes": genericHTTPMaxResponseBytes(config),
 		"demo_repository":                 strings.TrimSpace(config.DemoRepository),
+		"secret_broker":                   secretBrokerName(config),
 		"store":                           providerStore(config),
 		"ready":                           (!githubSelected || githubConfigured) && (!sentrySelected || sentryConfigured) && (!prometheusSelected || prometheusConfigured) && (!kubernetesSelected || kubernetesConfigured) && (!genericHTTPSelected || genericHTTPConfigured),
 		"warnings":                        providerConfigBlockers(config),
@@ -435,6 +436,15 @@ func providerStore(config Config) string {
 		return "sqlite"
 	}
 	return "memory"
+}
+
+func secretBrokerName(config Config) string {
+	switch config.SecretBroker.(type) {
+	case nil, controlplane.LocalSecretBroker:
+		return "local"
+	default:
+		return "custom"
+	}
 }
 
 func githubMaxAttempts(config Config) int {

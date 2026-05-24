@@ -512,7 +512,7 @@ components:
           example: github
     ProviderConfig:
       type: object
-      required: [code_provider, deploy_provider, errors_provider, metrics_provider, runtime_provider, docs_provider, internal_api_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, kubernetes_selected, kubernetes_base_url_set, kubernetes_token_configured, generic_http_selected, generic_http_base_url_set, generic_http_token_configured, store, ready, warnings]
+      required: [code_provider, deploy_provider, errors_provider, metrics_provider, runtime_provider, docs_provider, internal_api_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, kubernetes_selected, kubernetes_base_url_set, kubernetes_token_configured, generic_http_selected, generic_http_base_url_set, generic_http_token_configured, secret_broker, store, ready, warnings]
       properties:
         code_provider:
           type: string
@@ -609,6 +609,10 @@ components:
         demo_repository:
           type: string
           example: acme/backend
+        secret_broker:
+          type: string
+          enum: [local, custom]
+          example: local
         store:
           type: string
           example: sqlite

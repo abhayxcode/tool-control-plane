@@ -32,7 +32,17 @@ API authentication:
 
 - local dev is open by default
 - set `TOOL_CONTROL_PLANE_API_TOKEN` to require `Authorization: Bearer <token>` on all endpoints except `GET /healthz`
+- set `TOOL_CONTROL_PLANE_API_TOKEN_REF` to load the API token through the local secret broker instead
 - Go clients can pass the same token with `client.WithBearerToken`
+
+Secret refs:
+
+- direct secret env vars still work for local development
+- each direct secret env var has an optional `*_REF` variant that takes precedence
+- the local broker supports `env:NAME` and `file:/absolute/path` refs
+- explicit refs must resolve to non-empty values at startup
+- safe API responses expose only the selected ref, never the resolved secret value
+- custom brokers can be injected behind the same `SecretBroker` interface for Vault, cloud secret managers, or internal secret services later
 
 Request tracing:
 
@@ -55,6 +65,7 @@ GitHub adapter:
 - set `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER=github` to route `deploy.get_recent_deploys` to the GitHub adapter
 - set `TOOL_CONTROL_PLANE_DOCS_PROVIDER=github` to route `docs.search_runbooks` to GitHub-backed repository markdown files
 - set `GITHUB_TOKEN` before using the GitHub adapter, or configure GitHub App auth with `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, and `GITHUB_APP_PRIVATE_KEY`/`GITHUB_APP_PRIVATE_KEY_PATH`
+- `GITHUB_TOKEN_REF` and `GITHUB_APP_PRIVATE_KEY_REF` can load GitHub credentials via `env:` or `file:` refs
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
 - optional `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS` controls retry attempts for retryable GitHub read requests, default `3`
 - optional `TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF` controls linear retry backoff, default `200ms`
@@ -75,6 +86,7 @@ Sentry adapter:
 - default behavior keeps error capabilities on `mock`
 - set `TOOL_CONTROL_PLANE_ERRORS_PROVIDER=sentry` to route `errors.get_recent_errors` to the Sentry adapter
 - set `SENTRY_AUTH_TOKEN` before using the Sentry adapter; the token needs Sentry `event:read` access for the selected org/project
+- `SENTRY_AUTH_TOKEN_REF` can load the token via `env:` or `file:` refs
 - optional `SENTRY_ORG` and `SENTRY_PROJECT` provide defaults when tool calls do not include organization/project arguments
 - optional `SENTRY_BASE_URL` supports self-hosted Sentry later
 - `errors.get_recent_errors` is implemented against the Sentry project issues API and returns normalized service status, top errors, evidence, and source URLs
@@ -85,6 +97,7 @@ Prometheus adapter:
 - set `TOOL_CONTROL_PLANE_METRICS_PROVIDER=prometheus` to route `metrics.get_service_health` to the Prometheus adapter
 - set `PROMETHEUS_BASE_URL`, for example `http://localhost:9090`
 - optional `PROMETHEUS_BEARER_TOKEN` is sent as a bearer token for authenticated Prometheus-compatible gateways
+- `PROMETHEUS_BEARER_TOKEN_REF` can load the token via `env:` or `file:` refs
 - optional `PROMETHEUS_SERVICE_LABEL`, `PROMETHEUS_ENVIRONMENT_LABEL`, and `PROMETHEUS_STATUS_LABEL` customize the default label matchers
 - `metrics.get_service_health` queries Prometheus instant queries for `up`, p95 latency, and error-rate signals, then returns normalized service status, thresholds, evidence, and source URLs
 
@@ -94,6 +107,7 @@ Kubernetes adapter:
 - set `TOOL_CONTROL_PLANE_RUNTIME_PROVIDER=kubernetes` to route `runtime.get_workload_status` to the Kubernetes adapter
 - set `KUBERNETES_BASE_URL`, for example a `kubectl proxy` URL or Kubernetes API server URL
 - optional `KUBERNETES_BEARER_TOKEN` is sent as a bearer token for authenticated API servers
+- `KUBERNETES_BEARER_TOKEN_REF` can load the token via `env:` or `file:` refs
 - optional `KUBERNETES_NAMESPACE`, `KUBERNETES_LABEL_SELECTOR`, `KUBERNETES_SERVICE_LABEL`, and `KUBERNETES_ENVIRONMENT_LABEL` customize the default pod lookup
 - `runtime.get_workload_status` reads pods, pod events, restart counts, readiness state, and bounded logs for unhealthy/restarted pods
 
@@ -103,6 +117,7 @@ Generic HTTP adapter:
 - set `TOOL_CONTROL_PLANE_INTERNAL_API_PROVIDER=generic_http` to route `internal_api.request` to the generic HTTP adapter
 - set `GENERIC_HTTP_BASE_URL` to one trusted internal API base URL
 - optional `GENERIC_HTTP_BEARER_TOKEN` is sent as a bearer token
+- `GENERIC_HTTP_BEARER_TOKEN_REF` can load the token via `env:` or `file:` refs
 - optional `GENERIC_HTTP_ALLOWED_METHODS` defaults to `GET`; use a comma-separated list such as `GET,POST` when policy allows writes
 - optional `GENERIC_HTTP_TIMEOUT` defaults to `10s`
 - optional `GENERIC_HTTP_MAX_RESPONSE_BYTES` defaults to `65536` and is capped at `524288`
@@ -114,7 +129,7 @@ Demo provider configs:
 - `examples/demo.mock.env` keeps all code, CI, deployment, errors, metrics, runtime, docs, and internal API calls on mock providers.
 - `examples/demo.github.env.example` documents the real GitHub and optional Sentry/Prometheus/Kubernetes/generic HTTP provider variables. Copy it to a private ignored file before adding credentials.
 
-`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors/metrics/runtime/docs/internal API providers, GitHub auth mode, whether token/App credentials are configured, Sentry, Prometheus, Kubernetes, and generic HTTP readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
+`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors/metrics/runtime/docs/internal API providers, GitHub auth mode, whether token/App credentials are configured, Sentry, Prometheus, Kubernetes, and generic HTTP readiness flags, GitHub retry settings, secret broker name, store mode, readiness, and warnings. It intentionally does not return secret values.
 
 `GET /v1/connectors` returns a non-secret connector inventory. It includes config-derived connectors for the active provider routing plus API-registered connector metadata. Secret values are never returned; configured credentials are represented as references such as `env:GITHUB_TOKEN`.
 
@@ -320,6 +335,7 @@ Configuration:
 - `TOOL_CONTROL_PLANE_ADDR`
 - `TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT`
 - `TOOL_CONTROL_PLANE_API_TOKEN`
+- `TOOL_CONTROL_PLANE_API_TOKEN_REF`
 - `TOOL_CONTROL_PLANE_RATE_LIMIT_PER_MINUTE`
 - `TOOL_CONTROL_PLANE_STORE`
 - `TOOL_CONTROL_PLANE_SQLITE_PATH`
@@ -334,28 +350,34 @@ Configuration:
 - `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS`
 - `TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF`
 - `GITHUB_TOKEN`
+- `GITHUB_TOKEN_REF`
 - `GITHUB_APP_ID`
 - `GITHUB_APP_INSTALLATION_ID`
 - `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_APP_PRIVATE_KEY_REF`
 - `GITHUB_APP_PRIVATE_KEY_PATH`
 - `GITHUB_API_BASE_URL`
 - `SENTRY_AUTH_TOKEN`
+- `SENTRY_AUTH_TOKEN_REF`
 - `SENTRY_ORG`
 - `SENTRY_PROJECT`
 - `SENTRY_BASE_URL`
 - `PROMETHEUS_BASE_URL`
 - `PROMETHEUS_BEARER_TOKEN`
+- `PROMETHEUS_BEARER_TOKEN_REF`
 - `PROMETHEUS_SERVICE_LABEL`
 - `PROMETHEUS_ENVIRONMENT_LABEL`
 - `PROMETHEUS_STATUS_LABEL`
 - `KUBERNETES_BASE_URL`
 - `KUBERNETES_BEARER_TOKEN`
+- `KUBERNETES_BEARER_TOKEN_REF`
 - `KUBERNETES_NAMESPACE`
 - `KUBERNETES_LABEL_SELECTOR`
 - `KUBERNETES_SERVICE_LABEL`
 - `KUBERNETES_ENVIRONMENT_LABEL`
 - `GENERIC_HTTP_BASE_URL`
 - `GENERIC_HTTP_BEARER_TOKEN`
+- `GENERIC_HTTP_BEARER_TOKEN_REF`
 - `GENERIC_HTTP_ALLOWED_METHODS`
 - `GENERIC_HTTP_TIMEOUT`
 - `GENERIC_HTTP_MAX_RESPONSE_BYTES`
