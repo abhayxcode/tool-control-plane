@@ -73,6 +73,7 @@ type AdapterRegistryOptions struct {
 	GitHub     *GitHubAdapterConfig
 	Sentry     *SentryAdapterConfig
 	Prometheus *PrometheusAdapterConfig
+	Kubernetes *KubernetesAdapterConfig
 }
 
 func DefaultAdapterRegistryWithOptions(options AdapterRegistryOptions) AdapterRegistry {
@@ -87,6 +88,9 @@ func DefaultAdapterRegistryWithOptions(options AdapterRegistryOptions) AdapterRe
 	}
 	if options.Prometheus != nil {
 		adapters[PrometheusProvider] = NewPrometheusAdapter(*options.Prometheus)
+	}
+	if options.Kubernetes != nil {
+		adapters[KubernetesProvider] = NewKubernetesAdapter(*options.Kubernetes)
 	}
 	return NewAdapterRegistry(adapters)
 }

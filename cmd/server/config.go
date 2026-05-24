@@ -22,6 +22,7 @@ type Config struct {
 	DeployProvider          string
 	ErrorsProvider          string
 	MetricsProvider         string
+	RuntimeProvider         string
 	GitHubToken             string
 	GitHubAppID             string
 	GitHubAppInstallationID string
@@ -39,6 +40,12 @@ type Config struct {
 	PrometheusServiceLabel  string
 	PrometheusEnvLabel      string
 	PrometheusStatusLabel   string
+	KubernetesBaseURL       string
+	KubernetesBearerToken   string
+	KubernetesNamespace     string
+	KubernetesLabelSelector string
+	KubernetesServiceLabel  string
+	KubernetesEnvLabel      string
 	DemoRepository          string
 }
 
@@ -53,6 +60,7 @@ func configFromEnv() (Config, error) {
 		DeployProvider:          os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
 		ErrorsProvider:          os.Getenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER"),
 		MetricsProvider:         os.Getenv("TOOL_CONTROL_PLANE_METRICS_PROVIDER"),
+		RuntimeProvider:         os.Getenv("TOOL_CONTROL_PLANE_RUNTIME_PROVIDER"),
 		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
 		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
 		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),
@@ -68,6 +76,12 @@ func configFromEnv() (Config, error) {
 		PrometheusServiceLabel:  os.Getenv("PROMETHEUS_SERVICE_LABEL"),
 		PrometheusEnvLabel:      os.Getenv("PROMETHEUS_ENVIRONMENT_LABEL"),
 		PrometheusStatusLabel:   os.Getenv("PROMETHEUS_STATUS_LABEL"),
+		KubernetesBaseURL:       os.Getenv("KUBERNETES_BASE_URL"),
+		KubernetesBearerToken:   os.Getenv("KUBERNETES_BEARER_TOKEN"),
+		KubernetesNamespace:     os.Getenv("KUBERNETES_NAMESPACE"),
+		KubernetesLabelSelector: os.Getenv("KUBERNETES_LABEL_SELECTOR"),
+		KubernetesServiceLabel:  os.Getenv("KUBERNETES_SERVICE_LABEL"),
+		KubernetesEnvLabel:      os.Getenv("KUBERNETES_ENVIRONMENT_LABEL"),
 		DemoRepository:          os.Getenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY"),
 	}
 	rawShutdownTimeout := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT"))
@@ -112,6 +126,7 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 	var githubConfig *controlplane.GitHubAdapterConfig
 	var sentryConfig *controlplane.SentryAdapterConfig
 	var prometheusConfig *controlplane.PrometheusAdapterConfig
+	var kubernetesConfig *controlplane.KubernetesAdapterConfig
 	overrides := map[string]string{}
 	if config.CodeProvider == controlplane.GitHubProvider || config.DeployProvider == controlplane.GitHubProvider {
 		if config.CodeProvider == controlplane.GitHubProvider {
@@ -159,12 +174,26 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 			StatusLabel:      config.PrometheusStatusLabel,
 		}
 	}
+	if config.RuntimeProvider == controlplane.KubernetesProvider {
+		for id, provider := range controlplane.KubernetesProviderOverrides() {
+			overrides[id] = provider
+		}
+		kubernetesConfig = &controlplane.KubernetesAdapterConfig{
+			BaseURL:          config.KubernetesBaseURL,
+			BearerToken:      config.KubernetesBearerToken,
+			Namespace:        config.KubernetesNamespace,
+			LabelSelector:    config.KubernetesLabelSelector,
+			ServiceLabel:     config.KubernetesServiceLabel,
+			EnvironmentLabel: config.KubernetesEnvLabel,
+		}
+	}
 	if len(overrides) > 0 {
 		registry = registry.WithProviderOverrides(overrides)
 		adapters = controlplane.DefaultAdapterRegistryWithOptions(controlplane.AdapterRegistryOptions{
 			GitHub:     githubConfig,
 			Sentry:     sentryConfig,
 			Prometheus: prometheusConfig,
+			Kubernetes: kubernetesConfig,
 		})
 	}
 	if config.Store == "sqlite" || config.SQLitePath != "" {

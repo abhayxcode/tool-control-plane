@@ -353,6 +353,156 @@ func TestPrometheusAdapterReturnsUnknownWhenNoSamples(t *testing.T) {
 	}
 }
 
+func TestKubernetesAdapterGetsWorkloadStatus(t *testing.T) {
+	requestsByPath := map[string]int{}
+	var authCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestsByPath[r.URL.Path]++
+		if r.Header.Get("Authorization") == "Bearer kube-token" {
+			authCount++
+		}
+		switch r.URL.Path {
+		case "/api/v1/namespaces/prod/pods":
+			if r.URL.Query().Get("labelSelector") != "app=backend-api" {
+				t.Fatalf("unexpected label selector: %q", r.URL.Query().Get("labelSelector"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"items":[
+				{
+					"metadata":{"name":"backend-api-good","namespace":"prod"},
+					"spec":{"nodeName":"node-a"},
+					"status":{
+						"phase":"Running",
+						"podIP":"10.0.0.1",
+						"hostIP":"10.0.1.1",
+						"startTime":"2026-07-16T09:00:00Z",
+						"conditions":[{"type":"Ready","status":"True"}],
+						"containerStatuses":[{"name":"app","ready":true,"restartCount":0,"state":{"running":{"startedAt":"2026-07-16T09:00:00Z"}}}]
+					}
+				},
+				{
+					"metadata":{"name":"backend-api-bad","namespace":"prod"},
+					"spec":{"nodeName":"node-b"},
+					"status":{
+						"phase":"Running",
+						"podIP":"10.0.0.2",
+						"hostIP":"10.0.1.2",
+						"conditions":[{"type":"Ready","status":"False","reason":"ContainersNotReady"}],
+						"containerStatuses":[{
+							"name":"app",
+							"ready":false,
+							"restartCount":3,
+							"state":{"waiting":{"reason":"CrashLoopBackOff","message":"back-off restarting failed container"}}
+						}]
+					}
+				}
+			]}`))
+		case "/api/v1/namespaces/prod/events":
+			if r.URL.Query().Get("fieldSelector") != "involvedObject.kind=Pod" {
+				t.Fatalf("unexpected field selector: %q", r.URL.Query().Get("fieldSelector"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"items":[
+				{
+					"metadata":{"name":"ev1","creationTimestamp":"2026-07-16T09:10:00Z"},
+					"involvedObject":{"kind":"Pod","name":"backend-api-bad"},
+					"type":"Warning",
+					"reason":"BackOff",
+					"message":"Back-off restarting failed container",
+					"count":4,
+					"lastTimestamp":"2026-07-16T09:11:00Z"
+				}
+			]}`))
+		case "/api/v1/namespaces/prod/pods/backend-api-bad/log":
+			if r.URL.Query().Get("tailLines") != "50" {
+				t.Fatalf("unexpected tail lines: %q", r.URL.Query().Get("tailLines"))
+			}
+			w.Header().Set("Content-Type", "text/plain")
+			w.Write([]byte("2026-07-16T09:11:00Z panic: database connection refused\n"))
+		default:
+			t.Fatalf("unexpected kubernetes request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	adapter := NewKubernetesAdapter(KubernetesAdapterConfig{
+		BaseURL:     server.URL,
+		BearerToken: "kube-token",
+		Client:      server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "runtime.get_workload_status",
+		Provider: KubernetesProvider,
+	}, ToolCallRequest{
+		ServiceID:   "backend",
+		Environment: "prod",
+		Arguments: map[string]any{
+			"namespace": "prod",
+			"workload":  "backend-api",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected kubernetes result, got error: %v", err)
+	}
+	if authCount != 3 {
+		t.Fatalf("expected bearer token on three requests, got %d", authCount)
+	}
+	if requestsByPath["/api/v1/namespaces/prod/pods"] != 1 || requestsByPath["/api/v1/namespaces/prod/events"] != 1 || requestsByPath["/api/v1/namespaces/prod/pods/backend-api-bad/log"] != 1 {
+		t.Fatalf("unexpected requests: %#v", requestsByPath)
+	}
+	if result["status"] != "degraded" {
+		t.Fatalf("expected degraded status, got %#v", result["status"])
+	}
+	if result["pods_ready"] != "1/2" {
+		t.Fatalf("expected 1/2 pods ready, got %#v", result["pods_ready"])
+	}
+	if result["restart_count"] != 3 {
+		t.Fatalf("expected restart count, got %#v", result["restart_count"])
+	}
+	if result["warning_event_count"] != 1 {
+		t.Fatalf("expected warning event count, got %#v", result["warning_event_count"])
+	}
+	logs := result["logs"].([]map[string]any)
+	if logs[0]["pod"] != "backend-api-bad" || !strings.Contains(logs[0]["log_excerpt"].(string), "database connection refused") {
+		t.Fatalf("unexpected logs: %#v", logs)
+	}
+}
+
+func TestKubernetesAdapterReturnsUnknownWhenNoPods(t *testing.T) {
+	var eventRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/namespaces/default/events" {
+			eventRequests++
+		}
+		if r.URL.Path != "/api/v1/namespaces/default/pods" {
+			t.Fatalf("unexpected kubernetes request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+
+	adapter := NewKubernetesAdapter(KubernetesAdapterConfig{
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "runtime.get_workload_status",
+		Provider: KubernetesProvider,
+	}, ToolCallRequest{
+		ServiceID: "backend",
+	})
+	if err != nil {
+		t.Fatalf("expected kubernetes result, got error: %v", err)
+	}
+	if result["status"] != "unknown" {
+		t.Fatalf("expected unknown status, got %#v", result["status"])
+	}
+	if eventRequests != 0 {
+		t.Fatalf("expected no event request when there are no pods")
+	}
+}
+
 func TestGitHubAdapterRejectsUnsupportedCapabilities(t *testing.T) {
 	adapter := NewGitHubAdapter(GitHubAdapterConfig{
 		Token: "test-token",
@@ -1480,6 +1630,24 @@ func TestPrometheusProviderOverridesMetricsCapability(t *testing.T) {
 	}
 	if errorsCapability.Provider != "mock" {
 		t.Fatalf("expected errors provider to remain mock, got %q", errorsCapability.Provider)
+	}
+}
+
+func TestKubernetesProviderOverridesRuntimeCapability(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(KubernetesProviderOverrides())
+	runtimeCapability, ok := registry.byID["runtime.get_workload_status"]
+	if !ok {
+		t.Fatalf("expected runtime capability")
+	}
+	if runtimeCapability.Provider != KubernetesProvider {
+		t.Fatalf("expected kubernetes provider, got %q", runtimeCapability.Provider)
+	}
+	metrics, ok := registry.byID["metrics.get_service_health"]
+	if !ok {
+		t.Fatalf("expected metrics capability")
+	}
+	if metrics.Provider != "mock" {
+		t.Fatalf("expected metrics provider to remain mock, got %q", metrics.Provider)
 	}
 }
 

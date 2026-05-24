@@ -18,7 +18,7 @@ This repo now exposes the first real Tool Control Plane HTTP boundary for Majdoo
 
 v1 milestone checklist: [`docs/v1-milestone.md`](docs/v1-milestone.md)
 
-Tool execution is routed through provider adapters. Current built-in providers are `mock`, `github`, `sentry`, and `prometheus`; future providers such as Datadog, Kubernetes, and Jira should implement the same adapter boundary instead of changing policy or approval logic.
+Tool execution is routed through provider adapters. Current built-in providers are `mock`, `github`, `sentry`, `prometheus`, and `kubernetes`; future providers such as Datadog and Jira should implement the same adapter boundary instead of changing policy or approval logic.
 
 Audit and approval state is routed through a storage interface. The default implementation is in-memory. SQLite can be enabled for local durable dev mode; Postgres can be added behind the same store boundary later.
 
@@ -85,12 +85,21 @@ Prometheus adapter:
 - optional `PROMETHEUS_SERVICE_LABEL`, `PROMETHEUS_ENVIRONMENT_LABEL`, and `PROMETHEUS_STATUS_LABEL` customize the default label matchers
 - `metrics.get_service_health` queries Prometheus instant queries for `up`, p95 latency, and error-rate signals, then returns normalized service status, thresholds, evidence, and source URLs
 
+Kubernetes adapter:
+
+- default behavior keeps runtime capabilities on `mock`
+- set `TOOL_CONTROL_PLANE_RUNTIME_PROVIDER=kubernetes` to route `runtime.get_workload_status` to the Kubernetes adapter
+- set `KUBERNETES_BASE_URL`, for example a `kubectl proxy` URL or Kubernetes API server URL
+- optional `KUBERNETES_BEARER_TOKEN` is sent as a bearer token for authenticated API servers
+- optional `KUBERNETES_NAMESPACE`, `KUBERNETES_LABEL_SELECTOR`, `KUBERNETES_SERVICE_LABEL`, and `KUBERNETES_ENVIRONMENT_LABEL` customize the default pod lookup
+- `runtime.get_workload_status` reads pods, pod events, restart counts, readiness state, and bounded logs for unhealthy/restarted pods
+
 Demo provider configs:
 
-- `examples/demo.mock.env` keeps all code, CI, deployment, errors, and metrics calls on mock providers.
-- `examples/demo.github.env.example` documents the real GitHub and optional Sentry/Prometheus provider variables. Copy it to a private ignored file before adding credentials.
+- `examples/demo.mock.env` keeps all code, CI, deployment, errors, metrics, and runtime calls on mock providers.
+- `examples/demo.github.env.example` documents the real GitHub and optional Sentry/Prometheus/Kubernetes provider variables. Copy it to a private ignored file before adding credentials.
 
-`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors/metrics providers, GitHub auth mode, whether token/App credentials are configured, Sentry and Prometheus readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
+`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors/metrics/runtime providers, GitHub auth mode, whether token/App credentials are configured, Sentry, Prometheus, and Kubernetes readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
 
 `GET /v1/readiness` returns the same non-secret provider readiness plus capability count, store/auth/rate-limit checks, optional demo repository access check, and blockers. Set `TOOL_CONTROL_PLANE_DEMO_REPOSITORY=owner/repo` to let readiness verify that the configured GitHub token/App can read the pushed demo repository. Majdoor uses this endpoint for demo and internal-alpha preflight.
 
@@ -227,6 +236,20 @@ The Sentry response includes normalized `status`, `top_errors`, `source_url`, an
 
 The Prometheus response includes normalized `status`, `up`, `latency_p95_ms`, `error_rate_percent`, query metadata, sample counts, thresholds, `source_url`, and evidence when data is available. The adapter uses Prometheus's stable HTTP API under `/api/v1`, specifically instant queries at `GET /api/v1/query`.
 
+`runtime.get_workload_status` accepts:
+
+- optional `namespace`, defaulting to `KUBERNETES_NAMESPACE` or `default`
+- optional `workload`, `service`, or `service_id`, defaulting to the request `service_id`
+- optional `environment` or `env`, defaulting to the request `environment`
+- optional `label_selector` or `labelSelector`; when absent the adapter builds one from `KUBERNETES_SERVICE_LABEL` and optional `KUBERNETES_ENVIRONMENT_LABEL`
+- optional `pod_limit`, capped at 20
+- optional `event_limit`, capped at 50
+- optional `include_logs`, defaulting to `true`
+- optional `log_pod_limit`, capped at 5
+- optional `tail_lines`, capped at 200
+
+The Kubernetes response includes normalized `status`, `pods_ready`, pod summaries, total restart count, warning event count, bounded logs for unhealthy/restarted pods, `source_url`, and evidence. The adapter uses Kubernetes core API reads for namespaced pods, events, and pod logs.
+
 Planned stack:
 
 - Go service
@@ -254,6 +277,7 @@ Configuration:
 - `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER`
 - `TOOL_CONTROL_PLANE_ERRORS_PROVIDER`
 - `TOOL_CONTROL_PLANE_METRICS_PROVIDER`
+- `TOOL_CONTROL_PLANE_RUNTIME_PROVIDER`
 - `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS`
 - `TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF`
 - `GITHUB_TOKEN`
@@ -271,6 +295,12 @@ Configuration:
 - `PROMETHEUS_SERVICE_LABEL`
 - `PROMETHEUS_ENVIRONMENT_LABEL`
 - `PROMETHEUS_STATUS_LABEL`
+- `KUBERNETES_BASE_URL`
+- `KUBERNETES_BEARER_TOKEN`
+- `KUBERNETES_NAMESPACE`
+- `KUBERNETES_LABEL_SELECTOR`
+- `KUBERNETES_SERVICE_LABEL`
+- `KUBERNETES_ENVIRONMENT_LABEL`
 
 ## APIs
 

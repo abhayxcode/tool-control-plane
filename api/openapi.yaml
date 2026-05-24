@@ -243,7 +243,7 @@ components:
           type: boolean
     ProviderConfig:
       type: object
-      required: [code_provider, deploy_provider, errors_provider, metrics_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, store, ready, warnings]
+      required: [code_provider, deploy_provider, errors_provider, metrics_provider, runtime_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, kubernetes_selected, kubernetes_base_url_set, kubernetes_token_configured, store, ready, warnings]
       properties:
         code_provider:
           type: string
@@ -257,6 +257,9 @@ components:
         metrics_provider:
           type: string
           example: prometheus
+        runtime_provider:
+          type: string
+          example: kubernetes
         github_selected:
           type: boolean
         github_auth_mode:
@@ -293,6 +296,24 @@ components:
         prometheus_status_label:
           type: string
           example: status
+        kubernetes_selected:
+          type: boolean
+        kubernetes_base_url_set:
+          type: boolean
+        kubernetes_token_configured:
+          type: boolean
+        kubernetes_namespace:
+          type: string
+          example: prod
+        kubernetes_label_selector:
+          type: string
+          example: app=backend
+        kubernetes_service_label:
+          type: string
+          example: app
+        kubernetes_environment_label:
+          type: string
+          example: environment
         demo_repository:
           type: string
           example: acme/backend

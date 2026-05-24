@@ -206,6 +206,32 @@ func TestNewServiceFromEnvCanRouteMetricsCapabilitiesToPrometheus(t *testing.T) 
 	}
 }
 
+func TestNewServiceFromEnvCanRouteRuntimeCapabilitiesToKubernetes(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		RuntimeProvider:   controlplane.KubernetesProvider,
+		KubernetesBaseURL: "http://kubernetes.local",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	var foundKubernetesRuntime bool
+	var foundMockMetrics bool
+	for _, detail := range svc.CapabilityDetails() {
+		if detail.ID == "runtime.get_workload_status" && detail.Provider == controlplane.KubernetesProvider {
+			foundKubernetesRuntime = true
+		}
+		if detail.ID == "metrics.get_service_health" && detail.Provider == "mock" {
+			foundMockMetrics = true
+		}
+	}
+	if !foundKubernetesRuntime {
+		t.Fatalf("expected runtime.get_workload_status to use kubernetes provider")
+	}
+	if !foundMockMetrics {
+		t.Fatalf("expected metrics.get_service_health to remain mock provider")
+	}
+}
+
 func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_ADDR", ":4200")
 	t.Setenv("TOOL_CONTROL_PLANE_API_TOKEN", "secret-token")
@@ -217,6 +243,7 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER", "github")
 	t.Setenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER", "sentry")
 	t.Setenv("TOOL_CONTROL_PLANE_METRICS_PROVIDER", "prometheus")
+	t.Setenv("TOOL_CONTROL_PLANE_RUNTIME_PROVIDER", "kubernetes")
 	t.Setenv("GITHUB_TOKEN", "github-token")
 	t.Setenv("GITHUB_APP_ID", "12345")
 	t.Setenv("GITHUB_APP_INSTALLATION_ID", "42")
@@ -233,6 +260,12 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("PROMETHEUS_SERVICE_LABEL", "app")
 	t.Setenv("PROMETHEUS_ENVIRONMENT_LABEL", "env")
 	t.Setenv("PROMETHEUS_STATUS_LABEL", "code")
+	t.Setenv("KUBERNETES_BASE_URL", "https://kubernetes.example")
+	t.Setenv("KUBERNETES_BEARER_TOKEN", "kubernetes-token")
+	t.Setenv("KUBERNETES_NAMESPACE", "prod")
+	t.Setenv("KUBERNETES_LABEL_SELECTOR", "app=backend")
+	t.Setenv("KUBERNETES_SERVICE_LABEL", "app")
+	t.Setenv("KUBERNETES_ENVIRONMENT_LABEL", "env")
 	t.Setenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY", "acme/backend")
 
 	config, err := configFromEnv()
@@ -254,7 +287,7 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
 		t.Fatalf("unexpected store config")
 	}
-	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.MetricsProvider != "prometheus" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
+	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.MetricsProvider != "prometheus" || config.RuntimeProvider != "kubernetes" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
 	}
 	if config.SentryAuthToken != "sentry-token" || config.SentryOrg != "acme" || config.SentryProject != "backend" || config.SentryBaseURL != "https://sentry.example" {
@@ -262,6 +295,9 @@ func TestConfigFromEnv(t *testing.T) {
 	}
 	if config.PrometheusBaseURL != "https://prometheus.example" || config.PrometheusBearerToken != "prometheus-token" || config.PrometheusServiceLabel != "app" || config.PrometheusEnvLabel != "env" || config.PrometheusStatusLabel != "code" {
 		t.Fatalf("unexpected Prometheus config")
+	}
+	if config.KubernetesBaseURL != "https://kubernetes.example" || config.KubernetesBearerToken != "kubernetes-token" || config.KubernetesNamespace != "prod" || config.KubernetesLabelSelector != "app=backend" || config.KubernetesServiceLabel != "app" || config.KubernetesEnvLabel != "env" {
+		t.Fatalf("unexpected Kubernetes config")
 	}
 	if config.GitHubAppID != "12345" || config.GitHubAppInstallationID != "42" || config.GitHubAppPrivateKey != "line1\nline2" {
 		t.Fatalf("unexpected GitHub App config")
@@ -341,6 +377,9 @@ func TestCapabilitiesExposeProviderConfigReadiness(t *testing.T) {
 	}
 	if body.ProviderConfig["metrics_provider"] != "mock" {
 		t.Fatalf("expected mock metrics provider, got %#v", body.ProviderConfig["metrics_provider"])
+	}
+	if body.ProviderConfig["runtime_provider"] != "mock" {
+		t.Fatalf("expected mock runtime provider, got %#v", body.ProviderConfig["runtime_provider"])
 	}
 	if body.ProviderConfig["github_token_configured"] != true {
 		t.Fatalf("expected configured github token")
@@ -448,6 +487,56 @@ func TestCapabilitiesExposePrometheusProviderConfigReadiness(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesExposeKubernetesProviderConfigReadiness(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		RuntimeProvider:         controlplane.KubernetesProvider,
+		KubernetesBaseURL:       "http://kubernetes.local",
+		KubernetesBearerToken:   "kube-token",
+		KubernetesNamespace:     "prod",
+		KubernetesLabelSelector: "app=backend",
+		KubernetesServiceLabel:  "app",
+		KubernetesEnvLabel:      "env",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	mux := newMux(svc, Config{
+		RuntimeProvider:         controlplane.KubernetesProvider,
+		KubernetesBaseURL:       "http://kubernetes.local",
+		KubernetesBearerToken:   "kube-token",
+		KubernetesNamespace:     "prod",
+		KubernetesLabelSelector: "app=backend",
+		KubernetesServiceLabel:  "app",
+		KubernetesEnvLabel:      "env",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig map[string]any `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig["runtime_provider"] != controlplane.KubernetesProvider {
+		t.Fatalf("expected kubernetes runtime provider, got %#v", body.ProviderConfig["runtime_provider"])
+	}
+	if body.ProviderConfig["kubernetes_selected"] != true || body.ProviderConfig["kubernetes_base_url_set"] != true || body.ProviderConfig["kubernetes_token_configured"] != true {
+		t.Fatalf("expected kubernetes selected and configured, got %#v", body.ProviderConfig)
+	}
+	if body.ProviderConfig["kubernetes_namespace"] != "prod" || body.ProviderConfig["kubernetes_label_selector"] != "app=backend" || body.ProviderConfig["kubernetes_service_label"] != "app" || body.ProviderConfig["kubernetes_environment_label"] != "env" {
+		t.Fatalf("unexpected kubernetes config: %#v", body.ProviderConfig)
+	}
+	if body.ProviderConfig["ready"] != true {
+		t.Fatalf("expected provider config ready")
+	}
+}
+
 func TestCapabilitiesExposeGitHubAppProviderConfigReadiness(t *testing.T) {
 	mux := newMux(controlplane.NewService(), Config{
 		CodeProvider:            controlplane.GitHubProvider,
@@ -544,6 +633,35 @@ func TestCapabilitiesExposeMissingSentryTokenWarning(t *testing.T) {
 func TestCapabilitiesExposeMissingPrometheusBaseURLWarning(t *testing.T) {
 	mux := newMux(controlplane.NewService(), Config{
 		MetricsProvider: controlplane.PrometheusProvider,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig struct {
+			Ready    bool     `json:"ready"`
+			Warnings []string `json:"warnings"`
+		} `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig.Ready {
+		t.Fatalf("expected provider config not ready")
+	}
+	if len(body.ProviderConfig.Warnings) != 1 {
+		t.Fatalf("expected one warning, got %d", len(body.ProviderConfig.Warnings))
+	}
+}
+
+func TestCapabilitiesExposeMissingKubernetesBaseURLWarning(t *testing.T) {
+	mux := newMux(controlplane.NewService(), Config{
+		RuntimeProvider: controlplane.KubernetesProvider,
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
 	resp := httptest.NewRecorder()

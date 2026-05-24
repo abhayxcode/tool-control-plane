@@ -159,6 +159,7 @@ func providerConfigSummary(config Config) map[string]any {
 	deployProvider := providerOrMock(config.DeployProvider)
 	errorsProvider := providerOrMock(config.ErrorsProvider)
 	metricsProvider := providerOrMock(config.MetricsProvider)
+	runtimeProvider := providerOrMock(config.RuntimeProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
 	githubTokenConfigured := strings.TrimSpace(config.GitHubToken) != ""
 	githubAppAuthConfigured := githubAppConfigured(config)
@@ -167,11 +168,14 @@ func providerConfigSummary(config Config) map[string]any {
 	sentryConfigured := strings.TrimSpace(config.SentryAuthToken) != ""
 	prometheusSelected := metricsProvider == controlplane.PrometheusProvider
 	prometheusConfigured := strings.TrimSpace(config.PrometheusBaseURL) != ""
+	kubernetesSelected := runtimeProvider == controlplane.KubernetesProvider
+	kubernetesConfigured := strings.TrimSpace(config.KubernetesBaseURL) != ""
 	return map[string]any{
 		"code_provider":                codeProvider,
 		"deploy_provider":              deployProvider,
 		"errors_provider":              errorsProvider,
 		"metrics_provider":             metricsProvider,
+		"runtime_provider":             runtimeProvider,
 		"github_selected":              githubSelected,
 		"github_auth_mode":             githubAuthMode(config),
 		"github_token_configured":      githubTokenConfigured,
@@ -190,9 +194,16 @@ func providerConfigSummary(config Config) map[string]any {
 		"prometheus_service_label":     firstConfiguredLabel(config.PrometheusServiceLabel, "service"),
 		"prometheus_environment_label": firstConfiguredLabel(config.PrometheusEnvLabel, "environment"),
 		"prometheus_status_label":      firstConfiguredLabel(config.PrometheusStatusLabel, "status"),
+		"kubernetes_selected":          kubernetesSelected,
+		"kubernetes_base_url_set":      kubernetesConfigured,
+		"kubernetes_token_configured":  strings.TrimSpace(config.KubernetesBearerToken) != "",
+		"kubernetes_namespace":         firstConfiguredLabel(config.KubernetesNamespace, "default"),
+		"kubernetes_label_selector":    strings.TrimSpace(config.KubernetesLabelSelector),
+		"kubernetes_service_label":     firstConfiguredLabel(config.KubernetesServiceLabel, "app"),
+		"kubernetes_environment_label": strings.TrimSpace(config.KubernetesEnvLabel),
 		"demo_repository":              strings.TrimSpace(config.DemoRepository),
 		"store":                        providerStore(config),
-		"ready":                        (!githubSelected || githubConfigured) && (!sentrySelected || sentryConfigured) && (!prometheusSelected || prometheusConfigured),
+		"ready":                        (!githubSelected || githubConfigured) && (!sentrySelected || sentryConfigured) && (!prometheusSelected || prometheusConfigured) && (!kubernetesSelected || kubernetesConfigured),
 		"warnings":                     providerConfigBlockers(config),
 	}
 }
@@ -203,6 +214,7 @@ func providerConfigBlockers(config Config) []string {
 	deployProvider := providerOrMock(config.DeployProvider)
 	errorsProvider := providerOrMock(config.ErrorsProvider)
 	metricsProvider := providerOrMock(config.MetricsProvider)
+	runtimeProvider := providerOrMock(config.RuntimeProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
 	if githubSelected && !githubCredentialConfigured(config) {
 		blockers = append(blockers, "GITHUB_TOKEN or GitHub App installation credentials are required when a GitHub provider is selected.")
@@ -212,6 +224,9 @@ func providerConfigBlockers(config Config) []string {
 	}
 	if metricsProvider == controlplane.PrometheusProvider && strings.TrimSpace(config.PrometheusBaseURL) == "" {
 		blockers = append(blockers, "PROMETHEUS_BASE_URL is required when the Prometheus metrics provider is selected.")
+	}
+	if runtimeProvider == controlplane.KubernetesProvider && strings.TrimSpace(config.KubernetesBaseURL) == "" {
+		blockers = append(blockers, "KUBERNETES_BASE_URL is required when the Kubernetes runtime provider is selected.")
 	}
 	return blockers
 }
