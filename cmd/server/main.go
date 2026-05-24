@@ -43,7 +43,11 @@ func main() {
 	}
 }
 
-func newMux(svc *controlplane.Service) *http.ServeMux {
+func newMux(svc *controlplane.Service, configs ...Config) *http.ServeMux {
+	config := Config{}
+	if len(configs) > 0 {
+		config = configs[0]
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
@@ -55,8 +59,9 @@ func newMux(svc *controlplane.Service) *http.ServeMux {
 	})
 	mux.HandleFunc("GET /v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
-			"capabilities": svc.Capabilities(),
-			"details":      svc.CapabilityDetails(),
+			"capabilities":    svc.Capabilities(),
+			"details":         svc.CapabilityDetails(),
+			"provider_config": providerConfigSummary(config),
 		})
 	})
 	mux.HandleFunc("POST /v1/tool-calls", func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +122,44 @@ func newMux(svc *controlplane.Service) *http.ServeMux {
 		writeJSON(w, result)
 	})
 	return mux
+}
+
+func providerConfigSummary(config Config) map[string]any {
+	codeProvider := providerOrMock(config.CodeProvider)
+	deployProvider := providerOrMock(config.DeployProvider)
+	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
+	githubConfigured := strings.TrimSpace(config.GitHubToken) != ""
+	warnings := []string{}
+	if githubSelected && !githubConfigured {
+		warnings = append(warnings, "GITHUB_TOKEN is required when a GitHub provider is selected.")
+	}
+	return map[string]any{
+		"code_provider":           codeProvider,
+		"deploy_provider":         deployProvider,
+		"github_selected":         githubSelected,
+		"github_token_configured": githubConfigured,
+		"github_base_url_set":     strings.TrimSpace(config.GitHubBaseURL) != "",
+		"store":                   providerStore(config),
+		"ready":                   !githubSelected || githubConfigured,
+		"warnings":                warnings,
+	}
+}
+
+func providerOrMock(provider string) string {
+	if strings.TrimSpace(provider) == "" {
+		return "mock"
+	}
+	return provider
+}
+
+func providerStore(config Config) string {
+	if strings.TrimSpace(config.Store) != "" {
+		return config.Store
+	}
+	if strings.TrimSpace(config.SQLitePath) != "" {
+		return "sqlite"
+	}
+	return "memory"
 }
 
 func withBearerAuth(next http.Handler, token string) http.Handler {

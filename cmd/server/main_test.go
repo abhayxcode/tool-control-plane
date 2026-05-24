@@ -202,6 +202,82 @@ func TestConfigFromEnvRejectsInvalidShutdownTimeout(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesExposeProviderConfigReadiness(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		CodeProvider:   controlplane.GitHubProvider,
+		DeployProvider: controlplane.GitHubProvider,
+		GitHubToken:    "test-token",
+		Store:          "sqlite",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	mux := newMux(svc, Config{
+		CodeProvider:   controlplane.GitHubProvider,
+		DeployProvider: controlplane.GitHubProvider,
+		GitHubToken:    "test-token",
+		Store:          "sqlite",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig map[string]any `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig["code_provider"] != controlplane.GitHubProvider {
+		t.Fatalf("expected github code provider, got %#v", body.ProviderConfig["code_provider"])
+	}
+	if body.ProviderConfig["deploy_provider"] != controlplane.GitHubProvider {
+		t.Fatalf("expected github deploy provider, got %#v", body.ProviderConfig["deploy_provider"])
+	}
+	if body.ProviderConfig["github_token_configured"] != true {
+		t.Fatalf("expected configured github token")
+	}
+	if body.ProviderConfig["ready"] != true {
+		t.Fatalf("expected provider config ready")
+	}
+	if body.ProviderConfig["store"] != "sqlite" {
+		t.Fatalf("expected sqlite store, got %#v", body.ProviderConfig["store"])
+	}
+}
+
+func TestCapabilitiesExposeMissingGitHubTokenWarning(t *testing.T) {
+	mux := newMux(controlplane.NewService(), Config{
+		CodeProvider: controlplane.GitHubProvider,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig struct {
+			Ready    bool     `json:"ready"`
+			Warnings []string `json:"warnings"`
+		} `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig.Ready {
+		t.Fatalf("expected provider config not ready")
+	}
+	if len(body.ProviderConfig.Warnings) != 1 {
+		t.Fatalf("expected one warning, got %d", len(body.ProviderConfig.Warnings))
+	}
+}
+
 func TestRunHTTPServerShutsDownWhenContextCancels(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

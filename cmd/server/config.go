@@ -96,7 +96,7 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 }
 
 func newHandler(config Config, svc *controlplane.Service) http.Handler {
-	return withRequestLogging(withRateLimit(withBearerAuth(newMux(svc), config.APIToken), newRateLimiter(config.RateLimitPerMinute, time.Minute)))
+	return withRequestLogging(withRateLimit(withBearerAuth(newMux(svc, config), config.APIToken), newRateLimiter(config.RateLimitPerMinute, time.Minute)))
 }
 
 func envOrDefault(key string, fallback string) string {

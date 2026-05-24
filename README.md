@@ -69,6 +69,8 @@ Demo provider configs:
 - `examples/demo.mock.env` keeps all code, CI, and deployment calls on mock providers.
 - `examples/demo.github.env.example` documents the real GitHub provider variables. Copy it to a private ignored file before adding credentials.
 
+`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy providers, whether a GitHub token is configured, store mode, readiness, and warnings. It intentionally does not return secret values.
+
 From the workspace root, the local demo runner can load a provider env file:
 
 ```bash
