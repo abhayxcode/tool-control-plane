@@ -70,6 +70,24 @@ func (c *Client) Capabilities(ctx context.Context) ([]string, []CapabilityDefini
 	return result.Capabilities, result.Details, nil
 }
 
+func (c *Client) Connectors(ctx context.Context) ([]Connector, error) {
+	var result struct {
+		Connectors []Connector `json:"connectors"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/connectors", nil, &result); err != nil {
+		return nil, err
+	}
+	return result.Connectors, nil
+}
+
+func (c *Client) CreateConnector(ctx context.Context, req ConnectorCreateRequest) (Connector, error) {
+	var result Connector
+	if err := c.do(ctx, http.MethodPost, "/v1/connectors", req, &result); err != nil {
+		return Connector{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) CallTool(ctx context.Context, req ToolCallRequest) (ToolCallResponse, error) {
 	var result ToolCallResponse
 	if err := c.do(ctx, http.MethodPost, "/v1/tool-calls", req, &result); err != nil {

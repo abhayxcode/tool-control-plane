@@ -67,6 +67,66 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	}
 }
 
+func TestCreateConnectorValidatesAndRedactsConfig(t *testing.T) {
+	svc := NewService()
+	connector, err := svc.CreateConnector(ConnectorCreateRequest{
+		OrgID:      "default",
+		Name:       "GitHub code host",
+		Provider:   "GitHub",
+		Capability: "Code_Host",
+		Config: map[string]any{
+			"base_url": "https://api.github.com",
+			"token":    "secret-token",
+			"nested": map[string]any{
+				"password": "secret-password",
+			},
+		},
+		SecretRef: "env:GITHUB_TOKEN",
+	})
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+	if connector.ID != "connector_000001" {
+		t.Fatalf("unexpected connector ID: %q", connector.ID)
+	}
+	if connector.Provider != "github" || connector.Capability != "code_host" {
+		t.Fatalf("expected normalized provider and capability")
+	}
+	if connector.Status != ConnectorStatusConfigured {
+		t.Fatalf("expected configured status, got %q", connector.Status)
+	}
+	if connector.Config["token"] != "[redacted]" {
+		t.Fatalf("expected connector token redacted")
+	}
+	nested, ok := connector.Config["nested"].(map[string]any)
+	if !ok || nested["password"] != "[redacted]" {
+		t.Fatalf("expected nested connector secret redacted")
+	}
+
+	connectors := svc.Connectors()
+	if len(connectors) != 1 || connectors[0].ID != connector.ID {
+		t.Fatalf("expected created connector in list")
+	}
+}
+
+func TestCreateConnectorRejectsInvalidRequests(t *testing.T) {
+	svc := NewService()
+	if _, err := svc.CreateConnector(ConnectorCreateRequest{
+		OrgID:      "default",
+		Provider:   "github",
+		Capability: "code_host",
+		Status:     "unknown",
+	}); err == nil {
+		t.Fatalf("expected invalid status error")
+	}
+	if _, err := svc.CreateConnector(ConnectorCreateRequest{
+		OrgID:    "default",
+		Provider: "github",
+	}); err == nil {
+		t.Fatalf("expected missing capability error")
+	}
+}
+
 func TestCallToolAllowsReadAction(t *testing.T) {
 	svc := NewService()
 	result := svc.CallTool(ToolCallRequest{

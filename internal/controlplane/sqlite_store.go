@@ -165,6 +165,61 @@ func (s *SQLiteStore) ToolCall(id string) (ToolCallRecord, bool) {
 	return scanToolCall(row)
 }
 
+func (s *SQLiteStore) CreateConnector(connector Connector) Connector {
+	tx, err := s.db.Begin()
+	panicOnStoreError(err)
+	defer tx.Rollback()
+
+	result, err := tx.Exec(`INSERT INTO connector_ids DEFAULT VALUES`)
+	panicOnStoreError(err)
+	seq, err := result.LastInsertId()
+	panicOnStoreError(err)
+	connector.ID = connectorID(int(seq))
+	configJSON := mustMarshalArgs(connector.Config)
+
+	_, err = tx.Exec(`
+		INSERT INTO connectors (
+			id, seq, org_id, name, provider, capability, config_json,
+			secret_ref, status, source, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		connector.ID,
+		seq,
+		connector.OrgID,
+		connector.Name,
+		connector.Provider,
+		connector.Capability,
+		configJSON,
+		connector.SecretRef,
+		connector.Status,
+		connector.Source,
+		connector.CreatedAt,
+		connector.UpdatedAt,
+	)
+	panicOnStoreError(err)
+	panicOnStoreError(tx.Commit())
+	return connector
+}
+
+func (s *SQLiteStore) Connectors() []Connector {
+	rows, err := s.db.Query(`
+		SELECT id, org_id, name, provider, capability, config_json,
+			secret_ref, status, source, created_at, updated_at
+		FROM connectors
+		ORDER BY seq ASC`)
+	panicOnStoreError(err)
+	defer rows.Close()
+
+	var result []Connector
+	for rows.Next() {
+		connector, ok := scanConnector(rows)
+		if ok {
+			result = append(result, connector)
+		}
+	}
+	panicOnStoreError(rows.Err())
+	return result
+}
+
 func (s *SQLiteStore) CreateApproval(approval ApprovalRequest) ApprovalRequest {
 	tx, err := s.db.Begin()
 	panicOnStoreError(err)
@@ -304,6 +359,10 @@ func (s *SQLiteStore) migrate() error {
 			seq INTEGER PRIMARY KEY AUTOINCREMENT
 		);
 
+		CREATE TABLE IF NOT EXISTS connector_ids (
+			seq INTEGER PRIMARY KEY AUTOINCREMENT
+		);
+
 		CREATE TABLE IF NOT EXISTS tool_calls (
 			id TEXT PRIMARY KEY,
 			seq INTEGER NOT NULL UNIQUE,
@@ -325,6 +384,21 @@ func (s *SQLiteStore) migrate() error {
 			error_json TEXT NOT NULL DEFAULT '',
 			approval_request_id TEXT NOT NULL DEFAULT '',
 			result_json TEXT NOT NULL DEFAULT '{}'
+		);
+
+		CREATE TABLE IF NOT EXISTS connectors (
+			id TEXT PRIMARY KEY,
+			seq INTEGER NOT NULL UNIQUE,
+			org_id TEXT NOT NULL,
+			name TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL,
+			capability TEXT NOT NULL,
+			config_json TEXT NOT NULL DEFAULT '{}',
+			secret_ref TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			source TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL DEFAULT ''
 		);
 
 		CREATE TABLE IF NOT EXISTS approvals (
@@ -423,6 +497,30 @@ func scanToolCall(scanner approvalScanner) (ToolCallRecord, bool) {
 	record.Result = mustUnmarshalArgs(resultJSON)
 	record.Error = mustUnmarshalToolCallError(errorJSON)
 	return record, true
+}
+
+func scanConnector(scanner approvalScanner) (Connector, bool) {
+	var connector Connector
+	var configJSON string
+	err := scanner.Scan(
+		&connector.ID,
+		&connector.OrgID,
+		&connector.Name,
+		&connector.Provider,
+		&connector.Capability,
+		&configJSON,
+		&connector.SecretRef,
+		&connector.Status,
+		&connector.Source,
+		&connector.CreatedAt,
+		&connector.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return Connector{}, false
+	}
+	panicOnStoreError(err)
+	connector.Config = mustUnmarshalArgs(configJSON)
+	return connector, true
 }
 
 func mustMarshalArgs(args map[string]any) string {

@@ -1,0 +1,142 @@
+package main
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/abhayxcode/tool-control-plane/internal/controlplane"
+)
+
+func connectorList(svc *controlplane.Service, config Config) []controlplane.Connector {
+	connectors := configuredConnectors(config)
+	connectors = append(connectors, svc.Connectors()...)
+	return connectors
+}
+
+func configuredConnectors(config Config) []controlplane.Connector {
+	codeProvider := providerOrMock(config.CodeProvider)
+	return []controlplane.Connector{
+		configuredConnector(config, "code_host", codeProvider),
+		configuredConnector(config, "ci", codeProvider),
+		configuredConnector(config, "deploy", providerOrMock(config.DeployProvider)),
+		configuredConnector(config, "errors", providerOrMock(config.ErrorsProvider)),
+		configuredConnector(config, "metrics", providerOrMock(config.MetricsProvider)),
+		configuredConnector(config, "runtime", providerOrMock(config.RuntimeProvider)),
+		configuredConnector(config, "docs", providerOrMock(config.DocsProvider)),
+	}
+}
+
+func configuredConnector(config Config, capability string, provider string) controlplane.Connector {
+	source := "env"
+	if provider == "mock" {
+		source = "default"
+	}
+	return controlplane.Connector{
+		ID:         configuredConnectorID(capability, provider),
+		OrgID:      "default",
+		Name:       fmt.Sprintf("%s %s", strings.ToUpper(provider), capability),
+		Provider:   provider,
+		Capability: capability,
+		Config:     connectorPublicConfig(config, capability, provider),
+		SecretRef:  connectorSecretRef(config, provider),
+		Status:     connectorStatus(config, provider),
+		Source:     source,
+	}
+}
+
+func configuredConnectorID(capability string, provider string) string {
+	safeCapability := strings.NewReplacer(".", "_", "-", "_", " ", "_").Replace(capability)
+	safeProvider := strings.NewReplacer(".", "_", "-", "_", " ", "_").Replace(provider)
+	return "connector_config_" + safeCapability + "_" + safeProvider
+}
+
+func connectorPublicConfig(config Config, capability string, provider string) map[string]any {
+	switch provider {
+	case "mock":
+		return map[string]any{
+			"fixture_provider": true,
+		}
+	case controlplane.GitHubProvider:
+		return map[string]any{
+			"auth_mode":         githubAuthMode(config),
+			"base_url_set":      strings.TrimSpace(config.GitHubBaseURL) != "",
+			"max_attempts":      githubMaxAttempts(config),
+			"retry_backoff_ms":  int(githubRetryBackoff(config) / time.Millisecond),
+			"demo_repository":   strings.TrimSpace(config.DemoRepository),
+			"capability_source": capability,
+		}
+	case controlplane.SentryProvider:
+		return map[string]any{
+			"base_url_set":        strings.TrimSpace(config.SentryBaseURL) != "",
+			"default_org_set":     strings.TrimSpace(config.SentryOrg) != "",
+			"default_project_set": strings.TrimSpace(config.SentryProject) != "",
+		}
+	case controlplane.PrometheusProvider:
+		return map[string]any{
+			"base_url_set":      strings.TrimSpace(config.PrometheusBaseURL) != "",
+			"service_label":     firstConfiguredLabel(config.PrometheusServiceLabel, "service"),
+			"environment_label": firstConfiguredLabel(config.PrometheusEnvLabel, "environment"),
+			"status_label":      firstConfiguredLabel(config.PrometheusStatusLabel, "status"),
+		}
+	case controlplane.KubernetesProvider:
+		return map[string]any{
+			"base_url_set":      strings.TrimSpace(config.KubernetesBaseURL) != "",
+			"namespace":         firstConfiguredLabel(config.KubernetesNamespace, "default"),
+			"label_selector":    strings.TrimSpace(config.KubernetesLabelSelector),
+			"service_label":     firstConfiguredLabel(config.KubernetesServiceLabel, "app"),
+			"environment_label": strings.TrimSpace(config.KubernetesEnvLabel),
+		}
+	default:
+		return map[string]any{}
+	}
+}
+
+func connectorSecretRef(config Config, provider string) string {
+	switch provider {
+	case controlplane.GitHubProvider:
+		if strings.TrimSpace(config.GitHubToken) != "" {
+			return "env:GITHUB_TOKEN"
+		}
+		if githubAppConfigured(config) {
+			return "env:GITHUB_APP_PRIVATE_KEY"
+		}
+	case controlplane.SentryProvider:
+		if strings.TrimSpace(config.SentryAuthToken) != "" {
+			return "env:SENTRY_AUTH_TOKEN"
+		}
+	case controlplane.PrometheusProvider:
+		if strings.TrimSpace(config.PrometheusBearerToken) != "" {
+			return "env:PROMETHEUS_BEARER_TOKEN"
+		}
+	case controlplane.KubernetesProvider:
+		if strings.TrimSpace(config.KubernetesBearerToken) != "" {
+			return "env:KUBERNETES_BEARER_TOKEN"
+		}
+	}
+	return ""
+}
+
+func connectorStatus(config Config, provider string) string {
+	switch provider {
+	case "mock":
+		return controlplane.ConnectorStatusReady
+	case controlplane.GitHubProvider:
+		if githubCredentialConfigured(config) {
+			return controlplane.ConnectorStatusReady
+		}
+	case controlplane.SentryProvider:
+		if strings.TrimSpace(config.SentryAuthToken) != "" {
+			return controlplane.ConnectorStatusReady
+		}
+	case controlplane.PrometheusProvider:
+		if strings.TrimSpace(config.PrometheusBaseURL) != "" {
+			return controlplane.ConnectorStatusReady
+		}
+	case controlplane.KubernetesProvider:
+		if strings.TrimSpace(config.KubernetesBaseURL) != "" {
+			return controlplane.ConnectorStatusReady
+		}
+	}
+	return controlplane.ConnectorStatusBlocked
+}

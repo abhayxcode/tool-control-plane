@@ -69,6 +69,22 @@ func newMux(svc *controlplane.Service, configs ...Config) *http.ServeMux {
 			"provider_config": providerConfigSummary(config),
 		})
 	})
+	mux.HandleFunc("GET /v1/connectors", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"connectors": connectorList(svc, config)})
+	})
+	mux.HandleFunc("POST /v1/connectors", func(w http.ResponseWriter, r *http.Request) {
+		var req controlplane.ConnectorCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		connector, err := svc.CreateConnector(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSONStatus(w, http.StatusCreated, connector)
+	})
 	mux.HandleFunc("POST /v1/tool-calls", func(w http.ResponseWriter, r *http.Request) {
 		var req controlplane.ToolCallRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -522,7 +538,12 @@ func (r *statusRecorder) WriteHeader(status int) {
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
+	writeJSONStatus(w, http.StatusOK, value)
+}
+
+func writeJSONStatus(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

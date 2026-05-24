@@ -79,6 +79,42 @@ paths:
                       $ref: "#/components/schemas/CapabilityDefinition"
                   provider_config:
                     $ref: "#/components/schemas/ProviderConfig"
+  /v1/connectors:
+    get:
+      summary: List configured and registered connectors
+      operationId: listConnectors
+      responses:
+        "200":
+          description: Connector inventory without raw secret values.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [connectors]
+                properties:
+                  connectors:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Connector"
+    post:
+      summary: Register connector metadata
+      description: Stores non-secret connector metadata for internal alpha. It does not hot-swap provider adapters in the current process.
+      operationId: createConnector
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectorCreateRequest"
+      responses:
+        "201":
+          description: Connector metadata was registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connector"
+        "400":
+          description: Invalid connector request.
   /v1/readiness:
     get:
       summary: Readiness check for provider and store configuration
@@ -349,6 +385,65 @@ components:
           type: string
         approval_required:
           type: boolean
+    Connector:
+      type: object
+      required: [id, org_id, provider, capability, status]
+      properties:
+        id:
+          type: string
+          example: connector_000001
+        org_id:
+          type: string
+          example: default
+        name:
+          type: string
+          example: GitHub code_host
+        provider:
+          type: string
+          example: github
+        capability:
+          type: string
+          example: code_host
+        config:
+          $ref: "#/components/schemas/JSONObject"
+        secret_ref:
+          type: string
+          example: env:GITHUB_TOKEN
+        status:
+          type: string
+          enum: [configured, ready, blocked, disabled]
+        source:
+          type: string
+          enum: [api, env, default]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ConnectorCreateRequest:
+      type: object
+      required: [org_id, provider, capability]
+      properties:
+        org_id:
+          type: string
+          example: default
+        name:
+          type: string
+        provider:
+          type: string
+          example: github
+        capability:
+          type: string
+          example: code_host
+        config:
+          $ref: "#/components/schemas/JSONObject"
+        secret_ref:
+          type: string
+          example: env:GITHUB_TOKEN
+        status:
+          type: string
+          enum: [configured, ready, blocked, disabled]
     ProviderConfig:
       type: object
       required: [code_provider, deploy_provider, errors_provider, metrics_provider, runtime_provider, docs_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, kubernetes_selected, kubernetes_base_url_set, kubernetes_token_configured, store, ready, warnings]

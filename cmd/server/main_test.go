@@ -192,6 +192,118 @@ func TestToolCallRecordHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestConnectorHTTPFlow(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		CodeProvider:    controlplane.GitHubProvider,
+		GitHubToken:     "test-token",
+		MetricsProvider: controlplane.PrometheusProvider,
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	mux := newMux(svc, Config{
+		CodeProvider:    controlplane.GitHubProvider,
+		GitHubToken:     "test-token",
+		MetricsProvider: controlplane.PrometheusProvider,
+	})
+
+	listReq := httptest.NewRequest(http.MethodGet, "/v1/connectors", nil)
+	listResp := httptest.NewRecorder()
+	mux.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", listResp.Code)
+	}
+	var listResult struct {
+		Connectors []controlplane.Connector `json:"connectors"`
+	}
+	if err := json.NewDecoder(listResp.Body).Decode(&listResult); err != nil {
+		t.Fatalf("decode connector list: %v", err)
+	}
+	var foundGitHubCode bool
+	var foundBlockedPrometheus bool
+	for _, connector := range listResult.Connectors {
+		if connector.Capability == "code_host" && connector.Provider == controlplane.GitHubProvider {
+			foundGitHubCode = true
+			if connector.Status != controlplane.ConnectorStatusReady {
+				t.Fatalf("expected ready github connector, got %q", connector.Status)
+			}
+			if connector.SecretRef != "env:GITHUB_TOKEN" {
+				t.Fatalf("expected github secret ref")
+			}
+			if _, ok := connector.Config["token"]; ok {
+				t.Fatalf("connector config must not include raw token")
+			}
+		}
+		if connector.Capability == "metrics" && connector.Provider == controlplane.PrometheusProvider {
+			foundBlockedPrometheus = true
+			if connector.Status != controlplane.ConnectorStatusBlocked {
+				t.Fatalf("expected blocked prometheus connector, got %q", connector.Status)
+			}
+		}
+	}
+	if !foundGitHubCode {
+		t.Fatalf("expected github code connector")
+	}
+	if !foundBlockedPrometheus {
+		t.Fatalf("expected blocked prometheus connector")
+	}
+
+	createBody := []byte(`{
+		"org_id": "default",
+		"name": "Internal API",
+		"provider": "generic_http",
+		"capability": "internal_api",
+		"config": {"base_url": "https://internal.example.local", "token": "secret-token"},
+		"secret_ref": "vault:internal-api-token"
+	}`)
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/connectors", bytes.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp := httptest.NewRecorder()
+	mux.ServeHTTP(createResp, createReq)
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", createResp.Code)
+	}
+	var created controlplane.Connector
+	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode connector: %v", err)
+	}
+	if created.ID == "" || created.Source != controlplane.ConnectorSourceAPI {
+		t.Fatalf("expected created API connector")
+	}
+	if created.Config["token"] != "[redacted]" {
+		t.Fatalf("expected created connector config redaction")
+	}
+
+	relistReq := httptest.NewRequest(http.MethodGet, "/v1/connectors", nil)
+	relistResp := httptest.NewRecorder()
+	mux.ServeHTTP(relistResp, relistReq)
+	if relistResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", relistResp.Code)
+	}
+	var relistResult struct {
+		Connectors []controlplane.Connector `json:"connectors"`
+	}
+	if err := json.NewDecoder(relistResp.Body).Decode(&relistResult); err != nil {
+		t.Fatalf("decode relisted connectors: %v", err)
+	}
+	var foundCreated bool
+	for _, connector := range relistResult.Connectors {
+		if connector.ID == created.ID {
+			foundCreated = true
+		}
+	}
+	if !foundCreated {
+		t.Fatalf("expected created connector in list")
+	}
+
+	badReq := httptest.NewRequest(http.MethodPost, "/v1/connectors", bytes.NewReader([]byte(`{"org_id":"default","provider":"github"}`)))
+	badResp := httptest.NewRecorder()
+	mux.ServeHTTP(badResp, badReq)
+	if badResp.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid connector, got %d", badResp.Code)
+	}
+}
+
 func TestMCPInitializeAndToolList(t *testing.T) {
 	mux := newMux(controlplane.NewService())
 	initReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)))
@@ -314,11 +426,15 @@ func TestMCPResourcesListAndRead(t *testing.T) {
 		t.Fatalf("decode resources/list response: %v", err)
 	}
 	var foundCapabilities bool
+	var foundConnectors bool
 	var foundToolCalls bool
 	var foundAuditExport bool
 	for _, resource := range listBody.Result.Resources {
 		if resource.URI == "tool-control-plane://capabilities" {
 			foundCapabilities = true
+		}
+		if resource.URI == "tool-control-plane://connectors" {
+			foundConnectors = true
 		}
 		if resource.URI == "tool-control-plane://tool-calls" {
 			foundToolCalls = true
@@ -329,6 +445,9 @@ func TestMCPResourcesListAndRead(t *testing.T) {
 	}
 	if !foundCapabilities {
 		t.Fatalf("expected capabilities resource")
+	}
+	if !foundConnectors {
+		t.Fatalf("expected connectors resource")
 	}
 	if !foundToolCalls {
 		t.Fatalf("expected tool calls resource")

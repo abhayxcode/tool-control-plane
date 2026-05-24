@@ -102,3 +102,34 @@ func TestMemoryStoreCreatesToolCallsInOrder(t *testing.T) {
 		t.Fatalf("expected missing tool call lookup to fail")
 	}
 }
+
+func TestMemoryStoreCreatesConnectorsInOrder(t *testing.T) {
+	store := NewMemoryStore()
+	first := store.CreateConnector(Connector{
+		OrgID:      "default",
+		Provider:   "github",
+		Capability: "code_host",
+		Status:     ConnectorStatusConfigured,
+	})
+	second := store.CreateConnector(Connector{
+		OrgID:      "default",
+		Provider:   "sentry",
+		Capability: "errors",
+		Status:     ConnectorStatusConfigured,
+	})
+
+	if first.ID != "connector_000001" {
+		t.Fatalf("unexpected first connector ID: %q", first.ID)
+	}
+	if second.ID != "connector_000002" {
+		t.Fatalf("unexpected second connector ID: %q", second.ID)
+	}
+
+	connectors := store.Connectors()
+	if len(connectors) != 2 {
+		t.Fatalf("expected two connectors")
+	}
+	if connectors[0].ID != first.ID || connectors[1].ID != second.ID {
+		t.Fatalf("expected connector insertion order")
+	}
+}

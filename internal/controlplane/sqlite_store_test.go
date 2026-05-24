@@ -178,6 +178,48 @@ func TestSQLiteStorePersistsToolCalls(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePersistsConnectors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "controlplane.sqlite3")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	connector := store.CreateConnector(Connector{
+		OrgID:      "default",
+		Name:       "GitHub code host",
+		Provider:   "github",
+		Capability: "code_host",
+		Config: map[string]any{
+			"base_url_set": false,
+		},
+		SecretRef: "env:GITHUB_TOKEN",
+		Status:    ConnectorStatusConfigured,
+		Source:    ConnectorSourceAPI,
+		CreatedAt: "2026-07-16T00:00:00Z",
+		UpdatedAt: "2026-07-16T00:00:00Z",
+	})
+	if err := store.Close(); err != nil {
+		t.Fatalf("close sqlite store: %v", err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("reopen sqlite store: %v", err)
+	}
+	defer reopened.Close()
+
+	connectors := reopened.Connectors()
+	if len(connectors) != 1 {
+		t.Fatalf("expected one persisted connector, got %d", len(connectors))
+	}
+	if connectors[0].ID != connector.ID || connectors[0].SecretRef != "env:GITHUB_TOKEN" {
+		t.Fatalf("expected persisted connector identity")
+	}
+	if connectors[0].Config["base_url_set"] != false {
+		t.Fatalf("expected persisted connector config")
+	}
+}
+
 func TestServiceCanUseSQLiteStore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "controlplane.sqlite3")
 	store, err := NewSQLiteStore(path)

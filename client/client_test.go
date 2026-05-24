@@ -35,6 +35,30 @@ func TestClientCallsToolAndApprovalLifecycle(t *testing.T) {
 		t.Fatalf("expected capabilities")
 	}
 
+	connectors, err := tcp.Connectors(ctx)
+	if err != nil {
+		t.Fatalf("connectors: %v", err)
+	}
+	if len(connectors) != 1 || connectors[0].Provider != "github" {
+		t.Fatalf("expected connector list")
+	}
+
+	createdConnector, err := tcp.CreateConnector(ctx, ConnectorCreateRequest{
+		OrgID:      "default",
+		Provider:   "generic_http",
+		Capability: "internal_api",
+		Config: map[string]any{
+			"base_url": "https://internal.example.local",
+		},
+		SecretRef: "vault:internal-api-token",
+	})
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+	if createdConnector.ID != "connector_000002" {
+		t.Fatalf("unexpected created connector ID: %q", createdConnector.ID)
+	}
+
 	toolCall, err := tcp.CallTool(ctx, ToolCallRequest{
 		OrgID:       "default",
 		ActorUserID: "local-user",
@@ -192,6 +216,19 @@ func testMux() *http.ServeMux {
 		Reason:      "Tool action requires approval before execution.",
 		RequestedAt: "2026-07-09T00:00:00Z",
 	}
+	connector := Connector{
+		ID:         "connector_000001",
+		OrgID:      "default",
+		Name:       "GitHub code host",
+		Provider:   "github",
+		Capability: "code_host",
+		Status:     "ready",
+		Source:     "env",
+		SecretRef:  "env:GITHUB_TOKEN",
+		Config: map[string]any{
+			"auth_mode": "token",
+		},
+	}
 	toolCallRecord := ToolCallRecord{
 		ID:          "tool_call_000001",
 		At:          "2026-07-09T00:00:00Z",
@@ -230,6 +267,25 @@ func testMux() *http.ServeMux {
 					ApprovalRequired: true,
 				},
 			},
+		})
+	})
+	mux.HandleFunc("GET /v1/connectors", func(w http.ResponseWriter, r *http.Request) {
+		writeTestJSON(w, map[string]any{
+			"connectors": []Connector{connector},
+		})
+	})
+	mux.HandleFunc("POST /v1/connectors", func(w http.ResponseWriter, r *http.Request) {
+		writeTestJSON(w, Connector{
+			ID:         "connector_000002",
+			OrgID:      "default",
+			Provider:   "generic_http",
+			Capability: "internal_api",
+			Config: map[string]any{
+				"base_url": "https://internal.example.local",
+			},
+			SecretRef: "vault:internal-api-token",
+			Status:    "configured",
+			Source:    "api",
 		})
 	})
 	mux.HandleFunc("POST /v1/tool-calls", func(w http.ResponseWriter, r *http.Request) {

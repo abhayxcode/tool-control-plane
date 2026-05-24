@@ -219,6 +219,13 @@ func mcpResources() []map[string]any {
 			"mimeType":    "application/json",
 		},
 		{
+			"uri":         "tool-control-plane://connectors",
+			"name":        "connectors",
+			"title":       "Tool Control Plane Connectors",
+			"description": "Configured and registered connectors without raw secret values.",
+			"mimeType":    "application/json",
+		},
+		{
 			"uri":         "tool-control-plane://readiness",
 			"name":        "readiness",
 			"title":       "Tool Control Plane Readiness",
@@ -279,6 +286,8 @@ func mcpResourcePayload(svc *controlplane.Service, config Config, uri string) (a
 		}, true
 	case "tool-control-plane://provider-config":
 		return providerConfigSummary(config), true
+	case "tool-control-plane://connectors":
+		return map[string]any{"connectors": connectorList(svc, config)}, true
 	case "tool-control-plane://readiness":
 		return readinessSummary(svc, config), true
 	case "tool-control-plane://audit":

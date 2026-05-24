@@ -208,6 +208,18 @@ func (s *Service) ToolCall(id string) (ToolCallRecord, bool) {
 	return s.store.ToolCall(id)
 }
 
+func (s *Service) CreateConnector(req ConnectorCreateRequest) (Connector, error) {
+	connector, err := newConnector(req, time.Now())
+	if err != nil {
+		return Connector{}, err
+	}
+	return s.store.CreateConnector(connector), nil
+}
+
+func (s *Service) Connectors() []Connector {
+	return s.store.Connectors()
+}
+
 func (s *Service) Approval(id string) (ApprovalRequest, bool) {
 	return s.store.Approval(id)
 }

@@ -10,6 +10,30 @@ type CapabilityDefinition struct {
 	ApprovalRequired bool   `json:"approval_required"`
 }
 
+type Connector struct {
+	ID         string         `json:"id"`
+	OrgID      string         `json:"org_id"`
+	Name       string         `json:"name,omitempty"`
+	Provider   string         `json:"provider"`
+	Capability string         `json:"capability"`
+	Config     map[string]any `json:"config,omitempty"`
+	SecretRef  string         `json:"secret_ref,omitempty"`
+	Status     string         `json:"status"`
+	Source     string         `json:"source,omitempty"`
+	CreatedAt  string         `json:"created_at,omitempty"`
+	UpdatedAt  string         `json:"updated_at,omitempty"`
+}
+
+type ConnectorCreateRequest struct {
+	OrgID      string         `json:"org_id"`
+	Name       string         `json:"name,omitempty"`
+	Provider   string         `json:"provider"`
+	Capability string         `json:"capability"`
+	Config     map[string]any `json:"config,omitempty"`
+	SecretRef  string         `json:"secret_ref,omitempty"`
+	Status     string         `json:"status,omitempty"`
+}
+
 type ToolCallRequest struct {
 	RequestID   string         `json:"request_id,omitempty"`
 	OrgID       string         `json:"org_id"`

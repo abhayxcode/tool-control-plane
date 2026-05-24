@@ -11,6 +11,8 @@ type Store interface {
 	AppendToolCall(record ToolCallRecord) ToolCallRecord
 	ToolCalls() []ToolCallRecord
 	ToolCall(id string) (ToolCallRecord, bool)
+	CreateConnector(connector Connector) Connector
+	Connectors() []Connector
 	CreateApproval(approval ApprovalRequest) ApprovalRequest
 	Approval(id string) (ApprovalRequest, bool)
 	Approvals() []ApprovalRequest
@@ -18,22 +20,27 @@ type Store interface {
 }
 
 type MemoryStore struct {
-	mu             sync.Mutex
-	audit          []AuditEntry
-	nextToolCallID int
-	toolCallOrder  []string
-	toolCalls      map[string]ToolCallRecord
-	nextApprovalID int
-	approvalOrder  []string
-	approvals      map[string]ApprovalRequest
+	mu              sync.Mutex
+	audit           []AuditEntry
+	nextToolCallID  int
+	toolCallOrder   []string
+	toolCalls       map[string]ToolCallRecord
+	nextConnectorID int
+	connectorOrder  []string
+	connectors      map[string]Connector
+	nextApprovalID  int
+	approvalOrder   []string
+	approvals       map[string]ApprovalRequest
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		nextToolCallID: 1,
-		toolCalls:      map[string]ToolCallRecord{},
-		nextApprovalID: 1,
-		approvals:      map[string]ApprovalRequest{},
+		nextToolCallID:  1,
+		toolCalls:       map[string]ToolCallRecord{},
+		nextConnectorID: 1,
+		connectors:      map[string]Connector{},
+		nextApprovalID:  1,
+		approvals:       map[string]ApprovalRequest{},
 	}
 }
 
@@ -78,6 +85,26 @@ func (s *MemoryStore) ToolCall(id string) (ToolCallRecord, bool) {
 	return record, ok
 }
 
+func (s *MemoryStore) CreateConnector(connector Connector) Connector {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	connector.ID = connectorID(s.nextConnectorID)
+	s.nextConnectorID++
+	s.connectors[connector.ID] = connector
+	s.connectorOrder = append(s.connectorOrder, connector.ID)
+	return connector
+}
+
+func (s *MemoryStore) Connectors() []Connector {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]Connector, 0, len(s.connectorOrder))
+	for _, id := range s.connectorOrder {
+		result = append(result, s.connectors[id])
+	}
+	return result
+}
+
 func (s *MemoryStore) CreateApproval(approval ApprovalRequest) ApprovalRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -117,4 +144,8 @@ func (s *MemoryStore) UpdateApproval(approval ApprovalRequest) bool {
 
 func toolCallID(seq int) string {
 	return fmt.Sprintf("tool_call_%06d", seq)
+}
+
+func connectorID(seq int) string {
+	return fmt.Sprintf("connector_%06d", seq)
 }
