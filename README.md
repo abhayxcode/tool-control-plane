@@ -105,6 +105,17 @@ Demo provider configs:
 
 `GET /v1/readiness` returns the same non-secret provider readiness plus capability count, store/auth/rate-limit checks, optional demo repository access check, and blockers. Set `TOOL_CONTROL_PLANE_DEMO_REPOSITORY=owner/repo` to let readiness verify that the configured GitHub token/App can read the pushed demo repository. Majdoor uses this endpoint for demo and internal-alpha preflight.
 
+MCP-compatible endpoint:
+
+- `POST /mcp` accepts JSON-RPC 2.0 requests
+- supported methods: `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, and `ping`
+- `tools/list` exposes the same governed capability registry as MCP tool definitions
+- `tools/call` routes through the existing policy, validation, provider adapter, approval, and audit path
+- `resources/list` and `resources/read` expose non-secret capability, provider-config, readiness, and audit resources
+- when `TOOL_CONTROL_PLANE_API_TOKEN` is set, `/mcp` uses the same bearer-token guard as the REST API
+
+MCP tool calls use the MCP tool name as `capability.action`. Standard metadata fields such as `org_id`, `actor_user_id`, `agent_run_id`, `service_id`, `environment`, and `request_id` are extracted from `arguments`; all remaining fields are passed to the underlying provider as tool arguments. A nested `arguments` or `tool_args` object can also be used for provider-specific arguments.
+
 From the workspace root, the local demo runner can load a provider env file:
 
 ```bash
@@ -323,6 +334,7 @@ Go client package: [`client`](client)
 
 - `GET /openapi.yaml`
 - `GET /healthz`
+- `POST /mcp`
 - `GET /v1/capabilities` returns stable capability IDs plus risk/provider metadata.
 - `POST /v1/tool-calls`
 - `GET /v1/audit`

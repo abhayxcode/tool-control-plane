@@ -58,6 +58,7 @@ func newMux(svc *controlplane.Service, configs ...Config) *http.ServeMux {
 		w.WriteHeader(http.StatusOK)
 		w.Write(api.OpenAPISpec)
 	})
+	mux.HandleFunc("POST /mcp", mcpHandler(svc, config))
 	mux.HandleFunc("GET /v1/readiness", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, readinessSummary(svc, config))
 	})

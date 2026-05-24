@@ -102,6 +102,184 @@ func TestApprovalHTTPFlow(t *testing.T) {
 	}
 }
 
+func TestMCPInitializeAndToolList(t *testing.T) {
+	mux := newMux(controlplane.NewService())
+	initReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)))
+	initResp := httptest.NewRecorder()
+	mux.ServeHTTP(initResp, initReq)
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", initResp.Code)
+	}
+	var initBody struct {
+		Result struct {
+			ProtocolVersion string         `json:"protocolVersion"`
+			Capabilities    map[string]any `json:"capabilities"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(initResp.Body).Decode(&initBody); err != nil {
+		t.Fatalf("decode initialize response: %v", err)
+	}
+	if initBody.Result.ProtocolVersion != mcpProtocolVersion {
+		t.Fatalf("unexpected protocol version: %s", initBody.Result.ProtocolVersion)
+	}
+	if _, ok := initBody.Result.Capabilities["tools"]; !ok {
+		t.Fatalf("expected tools capability")
+	}
+
+	listReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":"tools","method":"tools/list"}`)))
+	listResp := httptest.NewRecorder()
+	mux.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", listResp.Code)
+	}
+	var listBody struct {
+		Result struct {
+			Tools []struct {
+				Name        string         `json:"name"`
+				InputSchema map[string]any `json:"inputSchema"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(listResp.Body).Decode(&listBody); err != nil {
+		t.Fatalf("decode tools/list response: %v", err)
+	}
+	var foundMetrics bool
+	for _, tool := range listBody.Result.Tools {
+		if tool.Name == "metrics.get_service_health" {
+			foundMetrics = true
+			if tool.InputSchema["type"] != "object" {
+				t.Fatalf("expected object schema")
+			}
+		}
+	}
+	if !foundMetrics {
+		t.Fatalf("expected metrics tool in MCP list")
+	}
+}
+
+func TestMCPToolCallUsesToolControlPlane(t *testing.T) {
+	mux := newMux(controlplane.NewService())
+	body := []byte(`{
+		"jsonrpc":"2.0",
+		"id":2,
+		"method":"tools/call",
+		"params":{
+			"name":"metrics.get_service_health",
+			"arguments":{
+				"org_id":"default",
+				"actor_user_id":"local-user",
+				"agent_run_id":"run_mcp",
+				"service_id":"backend",
+				"environment":"prod",
+				"target":"backend-prod"
+			}
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	resp := httptest.NewRecorder()
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var result struct {
+		Result struct {
+			IsError           bool                          `json:"isError"`
+			StructuredContent controlplane.ToolCallResponse `json:"structuredContent"`
+			Content           []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode tools/call response: %v", err)
+	}
+	if result.Result.IsError {
+		t.Fatalf("expected successful MCP tool call")
+	}
+	if result.Result.StructuredContent.Status != "success" || result.Result.StructuredContent.Provider != "mock" {
+		t.Fatalf("unexpected structured content: %#v", result.Result.StructuredContent)
+	}
+	if len(result.Result.Content) != 1 || result.Result.Content[0].Type != "text" {
+		t.Fatalf("expected text content")
+	}
+}
+
+func TestMCPResourcesListAndRead(t *testing.T) {
+	mux := newMux(controlplane.NewService())
+	listReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"resources/list"}`)))
+	listResp := httptest.NewRecorder()
+	mux.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", listResp.Code)
+	}
+	var listBody struct {
+		Result struct {
+			Resources []struct {
+				URI string `json:"uri"`
+			} `json:"resources"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(listResp.Body).Decode(&listBody); err != nil {
+		t.Fatalf("decode resources/list response: %v", err)
+	}
+	var foundCapabilities bool
+	for _, resource := range listBody.Result.Resources {
+		if resource.URI == "tool-control-plane://capabilities" {
+			foundCapabilities = true
+		}
+	}
+	if !foundCapabilities {
+		t.Fatalf("expected capabilities resource")
+	}
+
+	readReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"tool-control-plane://capabilities"}}`)))
+	readResp := httptest.NewRecorder()
+	mux.ServeHTTP(readResp, readReq)
+	if readResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", readResp.Code)
+	}
+	var readBody struct {
+		Result struct {
+			Contents []struct {
+				URI      string `json:"uri"`
+				MimeType string `json:"mimeType"`
+				Text     string `json:"text"`
+			} `json:"contents"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(readResp.Body).Decode(&readBody); err != nil {
+		t.Fatalf("decode resources/read response: %v", err)
+	}
+	if len(readBody.Result.Contents) != 1 || readBody.Result.Contents[0].URI != "tool-control-plane://capabilities" {
+		t.Fatalf("unexpected resource contents: %#v", readBody.Result.Contents)
+	}
+	if readBody.Result.Contents[0].MimeType != "application/json" {
+		t.Fatalf("expected json resource content")
+	}
+}
+
+func TestMCPUnknownMethodReturnsJSONRPCError(t *testing.T) {
+	mux := newMux(controlplane.NewService())
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"nope"}`)))
+	resp := httptest.NewRecorder()
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		Error struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body.Error.Code != -32601 {
+		t.Fatalf("expected method not found, got %d", body.Error.Code)
+	}
+}
+
 func TestNewServiceFromEnvCanRouteCodeCapabilitiesToGitHub(t *testing.T) {
 	svc, err := newServiceFromConfig(Config{
 		CodeProvider: controlplane.GitHubProvider,
