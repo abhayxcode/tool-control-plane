@@ -512,7 +512,7 @@ components:
           example: github
     ProviderConfig:
       type: object
-      required: [code_provider, deploy_provider, errors_provider, metrics_provider, runtime_provider, docs_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, kubernetes_selected, kubernetes_base_url_set, kubernetes_token_configured, store, ready, warnings]
+      required: [code_provider, deploy_provider, errors_provider, metrics_provider, runtime_provider, docs_provider, internal_api_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, kubernetes_selected, kubernetes_base_url_set, kubernetes_token_configured, generic_http_selected, generic_http_base_url_set, generic_http_token_configured, store, ready, warnings]
       properties:
         code_provider:
           type: string
@@ -532,6 +532,9 @@ components:
         docs_provider:
           type: string
           example: github
+        internal_api_provider:
+          type: string
+          example: generic_http
         github_selected:
           type: boolean
         github_auth_mode:
@@ -586,6 +589,23 @@ components:
         kubernetes_environment_label:
           type: string
           example: environment
+        generic_http_selected:
+          type: boolean
+        generic_http_base_url_set:
+          type: boolean
+        generic_http_token_configured:
+          type: boolean
+        generic_http_allowed_methods:
+          type: array
+          items:
+            type: string
+          example: [GET]
+        generic_http_timeout_ms:
+          type: integer
+          example: 10000
+        generic_http_max_response_bytes:
+          type: integer
+          example: 65536
         demo_repository:
           type: string
           example: acme/backend

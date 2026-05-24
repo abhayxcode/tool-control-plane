@@ -108,6 +108,10 @@ func (v StaticRequestValidator) Validate(req ToolCallRequest, definition Capabil
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "runbooks", "paths", "doc_paths", "path") {
 			return fmt.Errorf("github docs.search_runbooks requires runbooks, paths, doc_paths, or path arguments")
 		}
+	case "internal_api.request":
+		if !hasStringArg(req.Arguments, "path") {
+			return fmt.Errorf("internal_api.request requires path argument")
+		}
 	}
 
 	return nil

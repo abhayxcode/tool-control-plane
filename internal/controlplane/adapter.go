@@ -70,10 +70,11 @@ func DefaultAdapterRegistry() AdapterRegistry {
 }
 
 type AdapterRegistryOptions struct {
-	GitHub     *GitHubAdapterConfig
-	Sentry     *SentryAdapterConfig
-	Prometheus *PrometheusAdapterConfig
-	Kubernetes *KubernetesAdapterConfig
+	GitHub      *GitHubAdapterConfig
+	Sentry      *SentryAdapterConfig
+	Prometheus  *PrometheusAdapterConfig
+	Kubernetes  *KubernetesAdapterConfig
+	GenericHTTP *GenericHTTPAdapterConfig
 }
 
 func DefaultAdapterRegistryWithOptions(options AdapterRegistryOptions) AdapterRegistry {
@@ -91,6 +92,9 @@ func DefaultAdapterRegistryWithOptions(options AdapterRegistryOptions) AdapterRe
 	}
 	if options.Kubernetes != nil {
 		adapters[KubernetesProvider] = NewKubernetesAdapter(*options.Kubernetes)
+	}
+	if options.GenericHTTP != nil {
+		adapters[GenericHTTPProvider] = NewGenericHTTPAdapter(*options.GenericHTTP)
 	}
 	return NewAdapterRegistry(adapters)
 }

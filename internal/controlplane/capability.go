@@ -164,6 +164,14 @@ func DefaultCapabilityRegistry() CapabilityRegistry {
 			Description: "Read recent error events for a service.",
 		},
 		{
+			ID:          "internal_api.request",
+			Capability:  "internal_api",
+			Action:      "request",
+			RiskLevel:   RiskRead,
+			Provider:    "mock",
+			Description: "Call a configured internal HTTP API through a bounded adapter.",
+		},
+		{
 			ID:          "metrics.get_service_health",
 			Capability:  "metrics",
 			Action:      "get_service_health",

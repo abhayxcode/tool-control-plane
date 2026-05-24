@@ -43,6 +43,15 @@ func defaultMockFixtures() map[string]map[string]any {
 			"evidence":   "Sentry shows 431 database connection timeout errors after the latest deploy.",
 			"source_url": "https://sentry.example.local/projects/backend-api/issues/123",
 		},
+		"internal_api.request": {
+			"status_code":  200,
+			"ok":           true,
+			"method":       "GET",
+			"source_url":   "https://internal-api.example.local/health",
+			"body_json":    map[string]any{"status": "ok"},
+			"content_type": "application/json",
+			"evidence":     "Mock internal API request returned HTTP 200.",
+		},
 		"deploy.get_recent_deploys": {
 			"deploys": []map[string]any{
 				{

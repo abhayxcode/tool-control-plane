@@ -97,12 +97,24 @@ Kubernetes adapter:
 - optional `KUBERNETES_NAMESPACE`, `KUBERNETES_LABEL_SELECTOR`, `KUBERNETES_SERVICE_LABEL`, and `KUBERNETES_ENVIRONMENT_LABEL` customize the default pod lookup
 - `runtime.get_workload_status` reads pods, pod events, restart counts, readiness state, and bounded logs for unhealthy/restarted pods
 
+Generic HTTP adapter:
+
+- default behavior keeps `internal_api.request` on `mock`
+- set `TOOL_CONTROL_PLANE_INTERNAL_API_PROVIDER=generic_http` to route `internal_api.request` to the generic HTTP adapter
+- set `GENERIC_HTTP_BASE_URL` to one trusted internal API base URL
+- optional `GENERIC_HTTP_BEARER_TOKEN` is sent as a bearer token
+- optional `GENERIC_HTTP_ALLOWED_METHODS` defaults to `GET`; use a comma-separated list such as `GET,POST` when policy allows writes
+- optional `GENERIC_HTTP_TIMEOUT` defaults to `10s`
+- optional `GENERIC_HTTP_MAX_RESPONSE_BYTES` defaults to `65536` and is capped at `524288`
+- tool arguments require relative `path`, optional `method`, optional object `query`, optional non-sensitive string `headers`, and optional JSON `body` for non-GET/HEAD methods
+- absolute URLs, `..` path segments, sensitive headers, unallowed methods, and oversized responses are blocked or bounded
+
 Demo provider configs:
 
-- `examples/demo.mock.env` keeps all code, CI, deployment, errors, metrics, runtime, and docs calls on mock providers.
-- `examples/demo.github.env.example` documents the real GitHub and optional Sentry/Prometheus/Kubernetes provider variables. Copy it to a private ignored file before adding credentials.
+- `examples/demo.mock.env` keeps all code, CI, deployment, errors, metrics, runtime, docs, and internal API calls on mock providers.
+- `examples/demo.github.env.example` documents the real GitHub and optional Sentry/Prometheus/Kubernetes/generic HTTP provider variables. Copy it to a private ignored file before adding credentials.
 
-`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors/metrics/runtime/docs providers, GitHub auth mode, whether token/App credentials are configured, Sentry, Prometheus, and Kubernetes readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
+`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors/metrics/runtime/docs/internal API providers, GitHub auth mode, whether token/App credentials are configured, Sentry, Prometheus, Kubernetes, and generic HTTP readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
 
 `GET /v1/connectors` returns a non-secret connector inventory. It includes config-derived connectors for the active provider routing plus API-registered connector metadata. Secret values are never returned; configured credentials are represented as references such as `env:GITHUB_TOKEN`.
 
@@ -318,6 +330,7 @@ Configuration:
 - `TOOL_CONTROL_PLANE_METRICS_PROVIDER`
 - `TOOL_CONTROL_PLANE_RUNTIME_PROVIDER`
 - `TOOL_CONTROL_PLANE_DOCS_PROVIDER`
+- `TOOL_CONTROL_PLANE_INTERNAL_API_PROVIDER`
 - `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS`
 - `TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF`
 - `GITHUB_TOKEN`
@@ -341,6 +354,11 @@ Configuration:
 - `KUBERNETES_LABEL_SELECTOR`
 - `KUBERNETES_SERVICE_LABEL`
 - `KUBERNETES_ENVIRONMENT_LABEL`
+- `GENERIC_HTTP_BASE_URL`
+- `GENERIC_HTTP_BEARER_TOKEN`
+- `GENERIC_HTTP_ALLOWED_METHODS`
+- `GENERIC_HTTP_TIMEOUT`
+- `GENERIC_HTTP_MAX_RESPONSE_BYTES`
 
 ## APIs
 

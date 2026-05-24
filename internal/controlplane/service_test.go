@@ -23,6 +23,7 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	var foundDraftPR bool
 	var foundGetFile bool
 	var foundGetPullRequest bool
+	var foundInternalAPI bool
 	var foundReadyForReview bool
 	for _, detail := range details {
 		if detail.ID == "code_host.create_draft_pr" {
@@ -46,6 +47,12 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 				t.Fatalf("expected get pull request risk %q, got %q", RiskRead, detail.RiskLevel)
 			}
 		}
+		if detail.ID == "internal_api.request" {
+			foundInternalAPI = true
+			if detail.RiskLevel != RiskRead {
+				t.Fatalf("expected internal api risk %q, got %q", RiskRead, detail.RiskLevel)
+			}
+		}
 		if detail.ID == "code_host.mark_ready_for_review" {
 			foundReadyForReview = true
 			if detail.RiskLevel != RiskWriteLow {
@@ -61,6 +68,9 @@ func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	}
 	if !foundGetPullRequest {
 		t.Fatalf("expected get pull request capability metadata")
+	}
+	if !foundInternalAPI {
+		t.Fatalf("expected internal api capability metadata")
 	}
 	if !foundReadyForReview {
 		t.Fatalf("expected mark ready for review capability metadata")
@@ -413,6 +423,25 @@ func TestCallToolRejectsInvalidGitHubDeployRequestBeforeAdapter(t *testing.T) {
 		t.Fatalf("expected invalid, got %q", result.Status)
 	}
 	if result.Reason != "github deploy.get_recent_deploys requires repository or owner and repo arguments" {
+		t.Fatalf("unexpected validation reason: %q", result.Reason)
+	}
+}
+
+func TestCallToolRejectsInvalidInternalAPIRequestBeforeAdapter(t *testing.T) {
+	svc := NewService()
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "internal_api",
+		Action:      "request",
+	})
+	if result.Status != DecisionInvalid {
+		t.Fatalf("expected invalid, got %q", result.Status)
+	}
+	if result.Reason != "internal_api.request requires path argument" {
 		t.Fatalf("unexpected validation reason: %q", result.Reason)
 	}
 }

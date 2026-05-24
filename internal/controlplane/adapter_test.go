@@ -153,6 +153,131 @@ func TestGitHubAdapterUsesGitHubAppInstallationToken(t *testing.T) {
 	}
 }
 
+func TestGenericHTTPAdapterCallsConfiguredBaseURL(t *testing.T) {
+	var sawAuth bool
+	var sawTraceHeader bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/status" {
+			t.Fatalf("unexpected generic http request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("service") != "backend" {
+			t.Fatalf("expected service query, got %q", r.URL.Query().Get("service"))
+		}
+		if r.Header.Get("Authorization") == "Bearer internal-token" {
+			sawAuth = true
+		}
+		if r.Header.Get("X-Trace-ID") == "trace-1" {
+			sawTraceHeader = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok","ready":true}`))
+	}))
+	defer server.Close()
+
+	adapter := NewGenericHTTPAdapter(GenericHTTPAdapterConfig{
+		BaseURL:        server.URL + "/api/",
+		BearerToken:    "internal-token",
+		AllowedMethods: []string{http.MethodGet},
+		Client:         server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "internal_api.request",
+		Provider: GenericHTTPProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"path": "status",
+			"query": map[string]any{
+				"service": "backend",
+			},
+			"headers": map[string]any{
+				"X-Trace-ID": "trace-1",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected generic http result, got error: %v", err)
+	}
+	if !sawAuth {
+		t.Fatalf("expected configured bearer token")
+	}
+	if !sawTraceHeader {
+		t.Fatalf("expected non-sensitive header")
+	}
+	if result["status_code"] != 200 {
+		t.Fatalf("expected status code 200, got %#v", result["status_code"])
+	}
+	body := result["body_json"].(map[string]any)
+	if body["status"] != "ok" || body["ready"] != true {
+		t.Fatalf("unexpected JSON body: %#v", body)
+	}
+}
+
+func TestGenericHTTPAdapterRejectsUnsafeRequests(t *testing.T) {
+	adapter := NewGenericHTTPAdapter(GenericHTTPAdapterConfig{
+		BaseURL:        "https://internal.example.local",
+		AllowedMethods: []string{http.MethodGet},
+	})
+	for name, args := range map[string]map[string]any{
+		"absolute_url": {
+			"path": "https://evil.example/status",
+		},
+		"path_traversal": {
+			"path": "../admin",
+		},
+		"disallowed_method": {
+			"path":   "status",
+			"method": http.MethodPost,
+		},
+		"sensitive_header": {
+			"path": "status",
+			"headers": map[string]any{
+				"Authorization": "Bearer nope",
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := adapter.Execute(CapabilityDefinition{
+				ID:       "internal_api.request",
+				Provider: GenericHTTPProvider,
+			}, ToolCallRequest{Arguments: args})
+			if err == nil {
+				t.Fatalf("expected generic http validation error")
+			}
+		})
+	}
+}
+
+func TestGenericHTTPAdapterReturnsProviderErrorMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not ready", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	adapter := NewGenericHTTPAdapter(GenericHTTPAdapterConfig{
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	_, err := adapter.Execute(CapabilityDefinition{
+		ID:       "internal_api.request",
+		Provider: GenericHTTPProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"path": "/status",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected provider error")
+	}
+	detailer, ok := err.(toolCallErrorDetailer)
+	if !ok {
+		t.Fatalf("expected tool call error detailer")
+	}
+	detail := detailer.ToolCallError()
+	if detail.Provider != GenericHTTPProvider || detail.StatusCode != http.StatusServiceUnavailable || !detail.Retryable {
+		t.Fatalf("unexpected provider error detail: %#v", detail)
+	}
+}
+
 func TestSentryAdapterGetsRecentErrors(t *testing.T) {
 	var sawAuth bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1724,6 +1849,24 @@ func TestKubernetesProviderOverridesRuntimeCapability(t *testing.T) {
 	}
 	if runtimeCapability.Provider != KubernetesProvider {
 		t.Fatalf("expected kubernetes provider, got %q", runtimeCapability.Provider)
+	}
+	metrics, ok := registry.byID["metrics.get_service_health"]
+	if !ok {
+		t.Fatalf("expected metrics capability")
+	}
+	if metrics.Provider != "mock" {
+		t.Fatalf("expected metrics provider to remain mock, got %q", metrics.Provider)
+	}
+}
+
+func TestGenericHTTPProviderOverridesInternalAPICapability(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(GenericHTTPProviderOverrides())
+	internalAPI, ok := registry.byID["internal_api.request"]
+	if !ok {
+		t.Fatalf("expected internal api capability")
+	}
+	if internalAPI.Provider != GenericHTTPProvider {
+		t.Fatalf("expected generic http provider, got %q", internalAPI.Provider)
 	}
 	metrics, ok := registry.byID["metrics.get_service_health"]
 	if !ok {

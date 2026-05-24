@@ -219,6 +219,7 @@ func providerConfigSummary(config Config) map[string]any {
 	metricsProvider := providerOrMock(config.MetricsProvider)
 	runtimeProvider := providerOrMock(config.RuntimeProvider)
 	docsProvider := providerOrMock(config.DocsProvider)
+	internalAPIProvider := providerOrMock(config.InternalAPIProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider || docsProvider == controlplane.GitHubProvider
 	githubTokenConfigured := strings.TrimSpace(config.GitHubToken) != ""
 	githubAppAuthConfigured := githubAppConfigured(config)
@@ -229,42 +230,51 @@ func providerConfigSummary(config Config) map[string]any {
 	prometheusConfigured := strings.TrimSpace(config.PrometheusBaseURL) != ""
 	kubernetesSelected := runtimeProvider == controlplane.KubernetesProvider
 	kubernetesConfigured := strings.TrimSpace(config.KubernetesBaseURL) != ""
+	genericHTTPSelected := internalAPIProvider == controlplane.GenericHTTPProvider
+	genericHTTPConfigured := strings.TrimSpace(config.GenericHTTPBaseURL) != ""
 	return map[string]any{
-		"code_provider":                codeProvider,
-		"deploy_provider":              deployProvider,
-		"errors_provider":              errorsProvider,
-		"metrics_provider":             metricsProvider,
-		"runtime_provider":             runtimeProvider,
-		"docs_provider":                docsProvider,
-		"github_selected":              githubSelected,
-		"github_auth_mode":             githubAuthMode(config),
-		"github_token_configured":      githubTokenConfigured,
-		"github_app_configured":        githubAppAuthConfigured,
-		"github_base_url_set":          strings.TrimSpace(config.GitHubBaseURL) != "",
-		"github_max_attempts":          githubMaxAttempts(config),
-		"github_retry_backoff_ms":      int(githubRetryBackoff(config) / time.Millisecond),
-		"sentry_selected":              sentrySelected,
-		"sentry_token_configured":      sentryConfigured,
-		"sentry_base_url_set":          strings.TrimSpace(config.SentryBaseURL) != "",
-		"sentry_default_org_set":       strings.TrimSpace(config.SentryOrg) != "",
-		"sentry_default_project_set":   strings.TrimSpace(config.SentryProject) != "",
-		"prometheus_selected":          prometheusSelected,
-		"prometheus_base_url_set":      prometheusConfigured,
-		"prometheus_token_configured":  strings.TrimSpace(config.PrometheusBearerToken) != "",
-		"prometheus_service_label":     firstConfiguredLabel(config.PrometheusServiceLabel, "service"),
-		"prometheus_environment_label": firstConfiguredLabel(config.PrometheusEnvLabel, "environment"),
-		"prometheus_status_label":      firstConfiguredLabel(config.PrometheusStatusLabel, "status"),
-		"kubernetes_selected":          kubernetesSelected,
-		"kubernetes_base_url_set":      kubernetesConfigured,
-		"kubernetes_token_configured":  strings.TrimSpace(config.KubernetesBearerToken) != "",
-		"kubernetes_namespace":         firstConfiguredLabel(config.KubernetesNamespace, "default"),
-		"kubernetes_label_selector":    strings.TrimSpace(config.KubernetesLabelSelector),
-		"kubernetes_service_label":     firstConfiguredLabel(config.KubernetesServiceLabel, "app"),
-		"kubernetes_environment_label": strings.TrimSpace(config.KubernetesEnvLabel),
-		"demo_repository":              strings.TrimSpace(config.DemoRepository),
-		"store":                        providerStore(config),
-		"ready":                        (!githubSelected || githubConfigured) && (!sentrySelected || sentryConfigured) && (!prometheusSelected || prometheusConfigured) && (!kubernetesSelected || kubernetesConfigured),
-		"warnings":                     providerConfigBlockers(config),
+		"code_provider":                   codeProvider,
+		"deploy_provider":                 deployProvider,
+		"errors_provider":                 errorsProvider,
+		"metrics_provider":                metricsProvider,
+		"runtime_provider":                runtimeProvider,
+		"docs_provider":                   docsProvider,
+		"internal_api_provider":           internalAPIProvider,
+		"github_selected":                 githubSelected,
+		"github_auth_mode":                githubAuthMode(config),
+		"github_token_configured":         githubTokenConfigured,
+		"github_app_configured":           githubAppAuthConfigured,
+		"github_base_url_set":             strings.TrimSpace(config.GitHubBaseURL) != "",
+		"github_max_attempts":             githubMaxAttempts(config),
+		"github_retry_backoff_ms":         int(githubRetryBackoff(config) / time.Millisecond),
+		"sentry_selected":                 sentrySelected,
+		"sentry_token_configured":         sentryConfigured,
+		"sentry_base_url_set":             strings.TrimSpace(config.SentryBaseURL) != "",
+		"sentry_default_org_set":          strings.TrimSpace(config.SentryOrg) != "",
+		"sentry_default_project_set":      strings.TrimSpace(config.SentryProject) != "",
+		"prometheus_selected":             prometheusSelected,
+		"prometheus_base_url_set":         prometheusConfigured,
+		"prometheus_token_configured":     strings.TrimSpace(config.PrometheusBearerToken) != "",
+		"prometheus_service_label":        firstConfiguredLabel(config.PrometheusServiceLabel, "service"),
+		"prometheus_environment_label":    firstConfiguredLabel(config.PrometheusEnvLabel, "environment"),
+		"prometheus_status_label":         firstConfiguredLabel(config.PrometheusStatusLabel, "status"),
+		"kubernetes_selected":             kubernetesSelected,
+		"kubernetes_base_url_set":         kubernetesConfigured,
+		"kubernetes_token_configured":     strings.TrimSpace(config.KubernetesBearerToken) != "",
+		"kubernetes_namespace":            firstConfiguredLabel(config.KubernetesNamespace, "default"),
+		"kubernetes_label_selector":       strings.TrimSpace(config.KubernetesLabelSelector),
+		"kubernetes_service_label":        firstConfiguredLabel(config.KubernetesServiceLabel, "app"),
+		"kubernetes_environment_label":    strings.TrimSpace(config.KubernetesEnvLabel),
+		"generic_http_selected":           genericHTTPSelected,
+		"generic_http_base_url_set":       genericHTTPConfigured,
+		"generic_http_token_configured":   strings.TrimSpace(config.GenericHTTPBearerToken) != "",
+		"generic_http_allowed_methods":    genericHTTPAllowedMethods(config),
+		"generic_http_timeout_ms":         int(genericHTTPTimeout(config) / time.Millisecond),
+		"generic_http_max_response_bytes": genericHTTPMaxResponseBytes(config),
+		"demo_repository":                 strings.TrimSpace(config.DemoRepository),
+		"store":                           providerStore(config),
+		"ready":                           (!githubSelected || githubConfigured) && (!sentrySelected || sentryConfigured) && (!prometheusSelected || prometheusConfigured) && (!kubernetesSelected || kubernetesConfigured) && (!genericHTTPSelected || genericHTTPConfigured),
+		"warnings":                        providerConfigBlockers(config),
 	}
 }
 
@@ -276,6 +286,7 @@ func providerConfigBlockers(config Config) []string {
 	metricsProvider := providerOrMock(config.MetricsProvider)
 	runtimeProvider := providerOrMock(config.RuntimeProvider)
 	docsProvider := providerOrMock(config.DocsProvider)
+	internalAPIProvider := providerOrMock(config.InternalAPIProvider)
 	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider || docsProvider == controlplane.GitHubProvider
 	if githubSelected && !githubCredentialConfigured(config) {
 		blockers = append(blockers, "GITHUB_TOKEN or GitHub App installation credentials are required when a GitHub provider is selected.")
@@ -288,6 +299,9 @@ func providerConfigBlockers(config Config) []string {
 	}
 	if runtimeProvider == controlplane.KubernetesProvider && strings.TrimSpace(config.KubernetesBaseURL) == "" {
 		blockers = append(blockers, "KUBERNETES_BASE_URL is required when the Kubernetes runtime provider is selected.")
+	}
+	if internalAPIProvider == controlplane.GenericHTTPProvider && strings.TrimSpace(config.GenericHTTPBaseURL) == "" {
+		blockers = append(blockers, "GENERIC_HTTP_BASE_URL is required when the generic HTTP internal API provider is selected.")
 	}
 	return blockers
 }
@@ -435,6 +449,27 @@ func githubRetryBackoff(config Config) time.Duration {
 		return config.GitHubRetryBackoff
 	}
 	return 200 * time.Millisecond
+}
+
+func genericHTTPAllowedMethods(config Config) []string {
+	if len(config.GenericHTTPAllowedMethods) > 0 {
+		return config.GenericHTTPAllowedMethods
+	}
+	return []string{http.MethodGet}
+}
+
+func genericHTTPTimeout(config Config) time.Duration {
+	if config.GenericHTTPTimeout > 0 {
+		return config.GenericHTTPTimeout
+	}
+	return 10 * time.Second
+}
+
+func genericHTTPMaxResponseBytes(config Config) int {
+	if config.GenericHTTPMaxResponseBytes > 0 {
+		return config.GenericHTTPMaxResponseBytes
+	}
+	return 64 * 1024
 }
 
 func withBearerAuth(next http.Handler, token string) http.Handler {

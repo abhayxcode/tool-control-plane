@@ -24,6 +24,7 @@ func configuredConnectors(config Config) []controlplane.Connector {
 		configuredConnector(config, "metrics", providerOrMock(config.MetricsProvider)),
 		configuredConnector(config, "runtime", providerOrMock(config.RuntimeProvider)),
 		configuredConnector(config, "docs", providerOrMock(config.DocsProvider)),
+		configuredConnector(config, "internal_api", providerOrMock(config.InternalAPIProvider)),
 	}
 }
 
@@ -87,6 +88,13 @@ func connectorPublicConfig(config Config, capability string, provider string) ma
 			"service_label":     firstConfiguredLabel(config.KubernetesServiceLabel, "app"),
 			"environment_label": strings.TrimSpace(config.KubernetesEnvLabel),
 		}
+	case controlplane.GenericHTTPProvider:
+		return map[string]any{
+			"base_url_set":       strings.TrimSpace(config.GenericHTTPBaseURL) != "",
+			"allowed_methods":    genericHTTPAllowedMethods(config),
+			"timeout_ms":         int(genericHTTPTimeout(config) / time.Millisecond),
+			"max_response_bytes": genericHTTPMaxResponseBytes(config),
+		}
 	default:
 		return map[string]any{}
 	}
@@ -113,6 +121,10 @@ func connectorSecretRef(config Config, provider string) string {
 		if strings.TrimSpace(config.KubernetesBearerToken) != "" {
 			return "env:KUBERNETES_BEARER_TOKEN"
 		}
+	case controlplane.GenericHTTPProvider:
+		if strings.TrimSpace(config.GenericHTTPBearerToken) != "" {
+			return "env:GENERIC_HTTP_BEARER_TOKEN"
+		}
 	}
 	return ""
 }
@@ -135,6 +147,10 @@ func connectorStatus(config Config, provider string) string {
 		}
 	case controlplane.KubernetesProvider:
 		if strings.TrimSpace(config.KubernetesBaseURL) != "" {
+			return controlplane.ConnectorStatusReady
+		}
+	case controlplane.GenericHTTPProvider:
+		if strings.TrimSpace(config.GenericHTTPBaseURL) != "" {
 			return controlplane.ConnectorStatusReady
 		}
 	}

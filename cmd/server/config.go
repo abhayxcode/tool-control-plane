@@ -12,81 +12,91 @@ import (
 )
 
 type Config struct {
-	Addr                    string
-	ShutdownTimeout         time.Duration
-	APIToken                string
-	RateLimitPerMinute      int
-	Store                   string
-	SQLitePath              string
-	PolicyFile              string
-	CodeProvider            string
-	DeployProvider          string
-	ErrorsProvider          string
-	MetricsProvider         string
-	RuntimeProvider         string
-	DocsProvider            string
-	GitHubToken             string
-	GitHubAppID             string
-	GitHubAppInstallationID string
-	GitHubAppPrivateKey     string
-	GitHubAppPrivateKeyPath string
-	GitHubBaseURL           string
-	GitHubMaxAttempts       int
-	GitHubRetryBackoff      time.Duration
-	SentryAuthToken         string
-	SentryOrg               string
-	SentryProject           string
-	SentryBaseURL           string
-	PrometheusBaseURL       string
-	PrometheusBearerToken   string
-	PrometheusServiceLabel  string
-	PrometheusEnvLabel      string
-	PrometheusStatusLabel   string
-	KubernetesBaseURL       string
-	KubernetesBearerToken   string
-	KubernetesNamespace     string
-	KubernetesLabelSelector string
-	KubernetesServiceLabel  string
-	KubernetesEnvLabel      string
-	DemoRepository          string
+	Addr                        string
+	ShutdownTimeout             time.Duration
+	APIToken                    string
+	RateLimitPerMinute          int
+	Store                       string
+	SQLitePath                  string
+	PolicyFile                  string
+	CodeProvider                string
+	DeployProvider              string
+	ErrorsProvider              string
+	MetricsProvider             string
+	RuntimeProvider             string
+	DocsProvider                string
+	InternalAPIProvider         string
+	GitHubToken                 string
+	GitHubAppID                 string
+	GitHubAppInstallationID     string
+	GitHubAppPrivateKey         string
+	GitHubAppPrivateKeyPath     string
+	GitHubBaseURL               string
+	GitHubMaxAttempts           int
+	GitHubRetryBackoff          time.Duration
+	SentryAuthToken             string
+	SentryOrg                   string
+	SentryProject               string
+	SentryBaseURL               string
+	PrometheusBaseURL           string
+	PrometheusBearerToken       string
+	PrometheusServiceLabel      string
+	PrometheusEnvLabel          string
+	PrometheusStatusLabel       string
+	KubernetesBaseURL           string
+	KubernetesBearerToken       string
+	KubernetesNamespace         string
+	KubernetesLabelSelector     string
+	KubernetesServiceLabel      string
+	KubernetesEnvLabel          string
+	GenericHTTPBaseURL          string
+	GenericHTTPBearerToken      string
+	GenericHTTPAllowedMethods   []string
+	GenericHTTPTimeout          time.Duration
+	GenericHTTPMaxResponseBytes int
+	DemoRepository              string
 }
 
 func configFromEnv() (Config, error) {
 	config := Config{
-		Addr:                    envOrDefault("TOOL_CONTROL_PLANE_ADDR", ":4100"),
-		ShutdownTimeout:         10 * time.Second,
-		APIToken:                os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"),
-		Store:                   os.Getenv("TOOL_CONTROL_PLANE_STORE"),
-		SQLitePath:              os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
-		PolicyFile:              os.Getenv("TOOL_CONTROL_PLANE_POLICY_FILE"),
-		CodeProvider:            os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
-		DeployProvider:          os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
-		ErrorsProvider:          os.Getenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER"),
-		MetricsProvider:         os.Getenv("TOOL_CONTROL_PLANE_METRICS_PROVIDER"),
-		RuntimeProvider:         os.Getenv("TOOL_CONTROL_PLANE_RUNTIME_PROVIDER"),
-		DocsProvider:            os.Getenv("TOOL_CONTROL_PLANE_DOCS_PROVIDER"),
-		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
-		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
-		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),
-		GitHubAppPrivateKey:     normalizeGitHubAppPrivateKey(os.Getenv("GITHUB_APP_PRIVATE_KEY")),
-		GitHubAppPrivateKeyPath: os.Getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
-		GitHubBaseURL:           os.Getenv("GITHUB_API_BASE_URL"),
-		SentryAuthToken:         os.Getenv("SENTRY_AUTH_TOKEN"),
-		SentryOrg:               os.Getenv("SENTRY_ORG"),
-		SentryProject:           os.Getenv("SENTRY_PROJECT"),
-		SentryBaseURL:           os.Getenv("SENTRY_BASE_URL"),
-		PrometheusBaseURL:       os.Getenv("PROMETHEUS_BASE_URL"),
-		PrometheusBearerToken:   os.Getenv("PROMETHEUS_BEARER_TOKEN"),
-		PrometheusServiceLabel:  os.Getenv("PROMETHEUS_SERVICE_LABEL"),
-		PrometheusEnvLabel:      os.Getenv("PROMETHEUS_ENVIRONMENT_LABEL"),
-		PrometheusStatusLabel:   os.Getenv("PROMETHEUS_STATUS_LABEL"),
-		KubernetesBaseURL:       os.Getenv("KUBERNETES_BASE_URL"),
-		KubernetesBearerToken:   os.Getenv("KUBERNETES_BEARER_TOKEN"),
-		KubernetesNamespace:     os.Getenv("KUBERNETES_NAMESPACE"),
-		KubernetesLabelSelector: os.Getenv("KUBERNETES_LABEL_SELECTOR"),
-		KubernetesServiceLabel:  os.Getenv("KUBERNETES_SERVICE_LABEL"),
-		KubernetesEnvLabel:      os.Getenv("KUBERNETES_ENVIRONMENT_LABEL"),
-		DemoRepository:          os.Getenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY"),
+		Addr:                      envOrDefault("TOOL_CONTROL_PLANE_ADDR", ":4100"),
+		ShutdownTimeout:           10 * time.Second,
+		APIToken:                  os.Getenv("TOOL_CONTROL_PLANE_API_TOKEN"),
+		Store:                     os.Getenv("TOOL_CONTROL_PLANE_STORE"),
+		SQLitePath:                os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
+		PolicyFile:                os.Getenv("TOOL_CONTROL_PLANE_POLICY_FILE"),
+		CodeProvider:              os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
+		DeployProvider:            os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
+		ErrorsProvider:            os.Getenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER"),
+		MetricsProvider:           os.Getenv("TOOL_CONTROL_PLANE_METRICS_PROVIDER"),
+		RuntimeProvider:           os.Getenv("TOOL_CONTROL_PLANE_RUNTIME_PROVIDER"),
+		DocsProvider:              os.Getenv("TOOL_CONTROL_PLANE_DOCS_PROVIDER"),
+		InternalAPIProvider:       os.Getenv("TOOL_CONTROL_PLANE_INTERNAL_API_PROVIDER"),
+		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
+		GitHubAppID:               os.Getenv("GITHUB_APP_ID"),
+		GitHubAppInstallationID:   os.Getenv("GITHUB_APP_INSTALLATION_ID"),
+		GitHubAppPrivateKey:       normalizeGitHubAppPrivateKey(os.Getenv("GITHUB_APP_PRIVATE_KEY")),
+		GitHubAppPrivateKeyPath:   os.Getenv("GITHUB_APP_PRIVATE_KEY_PATH"),
+		GitHubBaseURL:             os.Getenv("GITHUB_API_BASE_URL"),
+		SentryAuthToken:           os.Getenv("SENTRY_AUTH_TOKEN"),
+		SentryOrg:                 os.Getenv("SENTRY_ORG"),
+		SentryProject:             os.Getenv("SENTRY_PROJECT"),
+		SentryBaseURL:             os.Getenv("SENTRY_BASE_URL"),
+		PrometheusBaseURL:         os.Getenv("PROMETHEUS_BASE_URL"),
+		PrometheusBearerToken:     os.Getenv("PROMETHEUS_BEARER_TOKEN"),
+		PrometheusServiceLabel:    os.Getenv("PROMETHEUS_SERVICE_LABEL"),
+		PrometheusEnvLabel:        os.Getenv("PROMETHEUS_ENVIRONMENT_LABEL"),
+		PrometheusStatusLabel:     os.Getenv("PROMETHEUS_STATUS_LABEL"),
+		KubernetesBaseURL:         os.Getenv("KUBERNETES_BASE_URL"),
+		KubernetesBearerToken:     os.Getenv("KUBERNETES_BEARER_TOKEN"),
+		KubernetesNamespace:       os.Getenv("KUBERNETES_NAMESPACE"),
+		KubernetesLabelSelector:   os.Getenv("KUBERNETES_LABEL_SELECTOR"),
+		KubernetesServiceLabel:    os.Getenv("KUBERNETES_SERVICE_LABEL"),
+		KubernetesEnvLabel:        os.Getenv("KUBERNETES_ENVIRONMENT_LABEL"),
+		GenericHTTPBaseURL:        os.Getenv("GENERIC_HTTP_BASE_URL"),
+		GenericHTTPBearerToken:    os.Getenv("GENERIC_HTTP_BEARER_TOKEN"),
+		GenericHTTPAllowedMethods: parseCSVEnv(os.Getenv("GENERIC_HTTP_ALLOWED_METHODS")),
+		DemoRepository:            os.Getenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY"),
 	}
 	rawShutdownTimeout := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT"))
 	if rawShutdownTimeout != "" {
@@ -120,6 +130,22 @@ func configFromEnv() (Config, error) {
 		}
 		config.GitHubRetryBackoff = backoff
 	}
+	rawGenericHTTPTimeout := strings.TrimSpace(os.Getenv("GENERIC_HTTP_TIMEOUT"))
+	if rawGenericHTTPTimeout != "" {
+		timeout, err := time.ParseDuration(rawGenericHTTPTimeout)
+		if err != nil || timeout <= 0 {
+			return Config{}, fmt.Errorf("invalid GENERIC_HTTP_TIMEOUT: must be a positive duration")
+		}
+		config.GenericHTTPTimeout = timeout
+	}
+	rawGenericHTTPMaxResponseBytes := strings.TrimSpace(os.Getenv("GENERIC_HTTP_MAX_RESPONSE_BYTES"))
+	if rawGenericHTTPMaxResponseBytes != "" {
+		limit, err := strconv.Atoi(rawGenericHTTPMaxResponseBytes)
+		if err != nil || limit <= 0 {
+			return Config{}, fmt.Errorf("invalid GENERIC_HTTP_MAX_RESPONSE_BYTES: must be a positive integer")
+		}
+		config.GenericHTTPMaxResponseBytes = limit
+	}
 	return config, nil
 }
 
@@ -132,6 +158,7 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 	var sentryConfig *controlplane.SentryAdapterConfig
 	var prometheusConfig *controlplane.PrometheusAdapterConfig
 	var kubernetesConfig *controlplane.KubernetesAdapterConfig
+	var genericHTTPConfig *controlplane.GenericHTTPAdapterConfig
 	overrides := map[string]string{}
 	if config.CodeProvider == controlplane.GitHubProvider || config.DeployProvider == controlplane.GitHubProvider || config.DocsProvider == controlplane.GitHubProvider {
 		if config.CodeProvider == controlplane.GitHubProvider {
@@ -197,13 +224,26 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 			EnvironmentLabel: config.KubernetesEnvLabel,
 		}
 	}
+	if config.InternalAPIProvider == controlplane.GenericHTTPProvider {
+		for id, provider := range controlplane.GenericHTTPProviderOverrides() {
+			overrides[id] = provider
+		}
+		genericHTTPConfig = &controlplane.GenericHTTPAdapterConfig{
+			BaseURL:          config.GenericHTTPBaseURL,
+			BearerToken:      config.GenericHTTPBearerToken,
+			AllowedMethods:   config.GenericHTTPAllowedMethods,
+			Timeout:          config.GenericHTTPTimeout,
+			MaxResponseBytes: config.GenericHTTPMaxResponseBytes,
+		}
+	}
 	if len(overrides) > 0 {
 		registry = registry.WithProviderOverrides(overrides)
 		adapters = controlplane.DefaultAdapterRegistryWithOptions(controlplane.AdapterRegistryOptions{
-			GitHub:     githubConfig,
-			Sentry:     sentryConfig,
-			Prometheus: prometheusConfig,
-			Kubernetes: kubernetesConfig,
+			GitHub:      githubConfig,
+			Sentry:      sentryConfig,
+			Prometheus:  prometheusConfig,
+			Kubernetes:  kubernetesConfig,
+			GenericHTTP: genericHTTPConfig,
 		})
 	}
 	if strings.TrimSpace(config.PolicyFile) != "" {
@@ -250,6 +290,18 @@ func envOrDefault(key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func parseCSVEnv(value string) []string {
+	parts := strings.Split(value, ",")
+	result := []string{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
 }
 
 func githubTokenSourceFromConfig(config Config, client *http.Client) (controlplane.GitHubTokenSource, error) {

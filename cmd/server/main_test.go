@@ -756,6 +756,60 @@ func TestNewServiceFromEnvCanRouteRuntimeCapabilitiesToKubernetes(t *testing.T) 
 	}
 }
 
+func TestNewServiceFromEnvCanRouteInternalAPICapabilityToGenericHTTP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/status" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+
+	svc, err := newServiceFromConfig(Config{
+		InternalAPIProvider: controlplane.GenericHTTPProvider,
+		GenericHTTPBaseURL:  server.URL,
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	var foundGenericHTTPInternalAPI bool
+	var foundMockMetrics bool
+	for _, detail := range svc.CapabilityDetails() {
+		if detail.ID == "internal_api.request" && detail.Provider == controlplane.GenericHTTPProvider {
+			foundGenericHTTPInternalAPI = true
+		}
+		if detail.ID == "metrics.get_service_health" && detail.Provider == "mock" {
+			foundMockMetrics = true
+		}
+	}
+	if !foundGenericHTTPInternalAPI {
+		t.Fatalf("expected internal_api.request to use generic_http provider")
+	}
+	if !foundMockMetrics {
+		t.Fatalf("expected metrics.get_service_health to remain mock provider")
+	}
+
+	result := svc.CallTool(controlplane.ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "internal_api",
+		Action:      "request",
+		Arguments: map[string]any{
+			"path": "/status",
+		},
+	})
+	if result.Status != "success" {
+		t.Fatalf("expected internal API success, got %#v", result)
+	}
+	if result.Provider != controlplane.GenericHTTPProvider {
+		t.Fatalf("expected generic http provider, got %q", result.Provider)
+	}
+}
+
 func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_ADDR", ":4200")
 	t.Setenv("TOOL_CONTROL_PLANE_API_TOKEN", "secret-token")
@@ -769,6 +823,7 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_METRICS_PROVIDER", "prometheus")
 	t.Setenv("TOOL_CONTROL_PLANE_RUNTIME_PROVIDER", "kubernetes")
 	t.Setenv("TOOL_CONTROL_PLANE_DOCS_PROVIDER", "github")
+	t.Setenv("TOOL_CONTROL_PLANE_INTERNAL_API_PROVIDER", "generic_http")
 	t.Setenv("GITHUB_TOKEN", "github-token")
 	t.Setenv("GITHUB_APP_ID", "12345")
 	t.Setenv("GITHUB_APP_INSTALLATION_ID", "42")
@@ -791,6 +846,11 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("KUBERNETES_LABEL_SELECTOR", "app=backend")
 	t.Setenv("KUBERNETES_SERVICE_LABEL", "app")
 	t.Setenv("KUBERNETES_ENVIRONMENT_LABEL", "env")
+	t.Setenv("GENERIC_HTTP_BASE_URL", "https://internal.example")
+	t.Setenv("GENERIC_HTTP_BEARER_TOKEN", "internal-token")
+	t.Setenv("GENERIC_HTTP_ALLOWED_METHODS", "GET,POST")
+	t.Setenv("GENERIC_HTTP_TIMEOUT", "3s")
+	t.Setenv("GENERIC_HTTP_MAX_RESPONSE_BYTES", "12345")
 	t.Setenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY", "acme/backend")
 
 	config, err := configFromEnv()
@@ -812,7 +872,7 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
 		t.Fatalf("unexpected store config")
 	}
-	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.MetricsProvider != "prometheus" || config.RuntimeProvider != "kubernetes" || config.DocsProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
+	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.MetricsProvider != "prometheus" || config.RuntimeProvider != "kubernetes" || config.DocsProvider != "github" || config.InternalAPIProvider != "generic_http" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
 	}
 	if config.SentryAuthToken != "sentry-token" || config.SentryOrg != "acme" || config.SentryProject != "backend" || config.SentryBaseURL != "https://sentry.example" {
@@ -823,6 +883,12 @@ func TestConfigFromEnv(t *testing.T) {
 	}
 	if config.KubernetesBaseURL != "https://kubernetes.example" || config.KubernetesBearerToken != "kubernetes-token" || config.KubernetesNamespace != "prod" || config.KubernetesLabelSelector != "app=backend" || config.KubernetesServiceLabel != "app" || config.KubernetesEnvLabel != "env" {
 		t.Fatalf("unexpected Kubernetes config")
+	}
+	if config.GenericHTTPBaseURL != "https://internal.example" || config.GenericHTTPBearerToken != "internal-token" || len(config.GenericHTTPAllowedMethods) != 2 || config.GenericHTTPAllowedMethods[0] != "GET" || config.GenericHTTPAllowedMethods[1] != "POST" {
+		t.Fatalf("unexpected generic HTTP config")
+	}
+	if config.GenericHTTPTimeout != 3*time.Second || config.GenericHTTPMaxResponseBytes != 12345 {
+		t.Fatalf("unexpected generic HTTP limits")
 	}
 	if config.GitHubAppID != "12345" || config.GitHubAppInstallationID != "42" || config.GitHubAppPrivateKey != "line1\nline2" {
 		t.Fatalf("unexpected GitHub App config")
@@ -858,6 +924,19 @@ func TestConfigFromEnvRejectsInvalidGitHubRetryConfig(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF", "nope")
 	if _, err := configFromEnv(); err == nil {
 		t.Fatalf("expected invalid GitHub retry backoff error")
+	}
+}
+
+func TestConfigFromEnvRejectsInvalidGenericHTTPConfig(t *testing.T) {
+	t.Setenv("GENERIC_HTTP_TIMEOUT", "0s")
+	if _, err := configFromEnv(); err == nil {
+		t.Fatalf("expected invalid generic HTTP timeout error")
+	}
+
+	t.Setenv("GENERIC_HTTP_TIMEOUT", "2s")
+	t.Setenv("GENERIC_HTTP_MAX_RESPONSE_BYTES", "0")
+	if _, err := configFromEnv(); err == nil {
+		t.Fatalf("expected invalid generic HTTP max response bytes error")
 	}
 }
 
@@ -1065,6 +1144,55 @@ func TestCapabilitiesExposeKubernetesProviderConfigReadiness(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesExposeGenericHTTPProviderConfigReadiness(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		InternalAPIProvider:         controlplane.GenericHTTPProvider,
+		GenericHTTPBaseURL:          "https://internal.example",
+		GenericHTTPBearerToken:      "internal-token",
+		GenericHTTPAllowedMethods:   []string{http.MethodGet, http.MethodPost},
+		GenericHTTPTimeout:          3 * time.Second,
+		GenericHTTPMaxResponseBytes: 12345,
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	mux := newMux(svc, Config{
+		InternalAPIProvider:         controlplane.GenericHTTPProvider,
+		GenericHTTPBaseURL:          "https://internal.example",
+		GenericHTTPBearerToken:      "internal-token",
+		GenericHTTPAllowedMethods:   []string{http.MethodGet, http.MethodPost},
+		GenericHTTPTimeout:          3 * time.Second,
+		GenericHTTPMaxResponseBytes: 12345,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig map[string]any `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig["internal_api_provider"] != controlplane.GenericHTTPProvider {
+		t.Fatalf("expected generic http internal api provider, got %#v", body.ProviderConfig["internal_api_provider"])
+	}
+	if body.ProviderConfig["generic_http_selected"] != true || body.ProviderConfig["generic_http_base_url_set"] != true || body.ProviderConfig["generic_http_token_configured"] != true {
+		t.Fatalf("expected generic http selected and configured, got %#v", body.ProviderConfig)
+	}
+	assertStringSlice(t, body.ProviderConfig["generic_http_allowed_methods"], []string{http.MethodGet, http.MethodPost})
+	if body.ProviderConfig["generic_http_timeout_ms"] != float64(3000) || body.ProviderConfig["generic_http_max_response_bytes"] != float64(12345) {
+		t.Fatalf("unexpected generic http limits: %#v", body.ProviderConfig)
+	}
+	if body.ProviderConfig["ready"] != true {
+		t.Fatalf("expected provider config ready")
+	}
+}
+
 func TestCapabilitiesExposeGitHubDocsProviderConfigReadiness(t *testing.T) {
 	svc, err := newServiceFromConfig(Config{
 		DocsProvider: controlplane.GitHubProvider,
@@ -1256,6 +1384,35 @@ func TestCapabilitiesExposeMissingPrometheusBaseURLWarning(t *testing.T) {
 func TestCapabilitiesExposeMissingKubernetesBaseURLWarning(t *testing.T) {
 	mux := newMux(controlplane.NewService(), Config{
 		RuntimeProvider: controlplane.KubernetesProvider,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig struct {
+			Ready    bool     `json:"ready"`
+			Warnings []string `json:"warnings"`
+		} `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig.Ready {
+		t.Fatalf("expected provider config not ready")
+	}
+	if len(body.ProviderConfig.Warnings) != 1 {
+		t.Fatalf("expected one warning, got %d", len(body.ProviderConfig.Warnings))
+	}
+}
+
+func TestCapabilitiesExposeMissingGenericHTTPBaseURLWarning(t *testing.T) {
+	mux := newMux(controlplane.NewService(), Config{
+		InternalAPIProvider: controlplane.GenericHTTPProvider,
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
 	resp := httptest.NewRecorder()
@@ -1691,4 +1848,20 @@ func testGitHubAppPrivateKeyPEM(t *testing.T) string {
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	}))
+}
+
+func assertStringSlice(t *testing.T, value any, expected []string) {
+	t.Helper()
+	items, ok := value.([]any)
+	if !ok {
+		t.Fatalf("expected string slice, got %#v", value)
+	}
+	if len(items) != len(expected) {
+		t.Fatalf("expected %#v, got %#v", expected, items)
+	}
+	for index := range expected {
+		if items[index] != expected[index] {
+			t.Fatalf("expected %#v, got %#v", expected, items)
+		}
+	}
 }
