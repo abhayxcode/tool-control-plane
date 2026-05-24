@@ -91,6 +91,7 @@ type Service struct {
 	validator RequestValidator
 	adapters  AdapterRegistry
 	store     Store
+	redaction RedactionPolicyRegistry
 }
 
 type ServiceOptions struct {
@@ -99,6 +100,7 @@ type ServiceOptions struct {
 	Validator RequestValidator
 	Adapters  AdapterRegistry
 	Store     Store
+	Redaction RedactionPolicyRegistry
 }
 
 func NewService() *Service {
@@ -126,12 +128,17 @@ func NewServiceWithOptions(options ServiceOptions) *Service {
 	if store == nil {
 		store = NewMemoryStore()
 	}
+	redaction := options.Redaction
+	if !redaction.Configured() {
+		redaction = DefaultRedactionPolicyRegistry()
+	}
 	return &Service{
 		registry:  registry,
 		policy:    policy,
 		validator: validator,
 		adapters:  adapters,
 		store:     store,
+		redaction: redaction,
 	}
 }
 
@@ -384,6 +391,7 @@ func (s *Service) appendAudit(req ToolCallRequest, riskLevel string, decision st
 }
 
 func (s *Service) appendToolCall(req ToolCallRequest, riskLevel string, decision string, approvalRequestID string, response ToolCallResponse) {
+	redactionPolicy := s.redactionPolicyFor(req, response)
 	s.store.AppendToolCall(ToolCallRecord{
 		At:                time.Now().UTC().Format(time.RFC3339Nano),
 		RequestID:         req.RequestID,
@@ -394,7 +402,7 @@ func (s *Service) appendToolCall(req ToolCallRequest, riskLevel string, decision
 		Environment:       req.Environment,
 		Capability:        req.Capability,
 		Action:            req.Action,
-		Arguments:         redactToolCallMap(req.Arguments),
+		Arguments:         redactToolCallMapWithPolicy(req.Arguments, redactionPolicy, redactionTargetArguments),
 		RiskLevel:         riskLevel,
 		Decision:          decision,
 		Provider:          response.Provider,
@@ -403,7 +411,7 @@ func (s *Service) appendToolCall(req ToolCallRequest, riskLevel string, decision
 		Reason:            response.Reason,
 		Error:             response.Error,
 		ApprovalRequestID: firstNonEmptyToolCallValue(approvalRequestID, response.ApprovalRequestID),
-		Result:            redactToolCallMap(response.Result),
+		Result:            redactToolCallMapWithPolicy(response.Result, redactionPolicy, redactionTargetResults),
 	})
 }
 
@@ -430,6 +438,25 @@ func (s *Service) providerRouteTrace(definition CapabilityDefinition) *ProviderR
 		AlternativeProviders:     alternatives,
 		Reason:                   reason,
 	}
+}
+
+func (s *Service) redactionPolicyFor(req ToolCallRequest, response ToolCallResponse) RedactionPolicy {
+	if response.RouteTrace != nil {
+		return s.redaction.PolicyFor(CapabilityDefinition{
+			ID:         response.RouteTrace.CapabilityID,
+			Capability: req.Capability,
+			Action:     req.Action,
+			Provider:   response.RouteTrace.SelectedProvider,
+		})
+	}
+	if definition, ok := s.registry.Lookup(req.Capability, req.Action); ok {
+		return s.redaction.PolicyFor(definition)
+	}
+	return s.redaction.PolicyFor(CapabilityDefinition{
+		ID:         req.Capability + "." + req.Action,
+		Capability: req.Capability,
+		Action:     req.Action,
+	})
 }
 
 func cloneProviderRouteTrace(trace *ProviderRouteTrace) *ProviderRouteTrace {

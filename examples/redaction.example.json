@@ -1,0 +1,31 @@
+{
+  "default": {
+    "max_string_length": 2000
+  },
+  "by_capability": {
+    "code_host.get_file": {
+      "sensitive_argument_keys": ["file_content", "content"],
+      "sensitive_result_keys": ["content"]
+    },
+    "ci.get_logs": {
+      "sensitive_result_keys": ["logs", "log_excerpt", "raw_log"],
+      "max_string_length": 1200
+    },
+    "runtime.get_workload_status": {
+      "sensitive_result_keys": ["logs", "log_excerpt", "raw_log"],
+      "max_string_length": 1200
+    }
+  },
+  "by_provider": {
+    "generic_http": {
+      "sensitive_argument_keys": ["body"],
+      "sensitive_result_keys": ["body_text"]
+    }
+  },
+  "by_capability_provider": {
+    "internal_api.request@generic_http": {
+      "sensitive_result_keys": ["body_json", "body_text"],
+      "max_string_length": 1000
+    }
+  }
+}

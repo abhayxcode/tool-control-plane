@@ -185,6 +185,17 @@ func policyPayload(svc *controlplane.Service, config Config) map[string]any {
 	}
 }
 
+func redactionPayload(config Config) map[string]any {
+	source := "default"
+	if strings.TrimSpace(config.RedactionFile) != "" {
+		source = "file"
+	}
+	return map[string]any{
+		"source":             source,
+		"redaction_file_set": strings.TrimSpace(config.RedactionFile) != "",
+	}
+}
+
 func readinessSummary(svc *controlplane.Service, config Config) map[string]any {
 	providerConfig := providerConfigSummary(config)
 	blockers := providerConfigBlockers(config)
@@ -208,6 +219,7 @@ func readinessSummary(svc *controlplane.Service, config Config) map[string]any {
 			"auth_required":              strings.TrimSpace(config.APIToken) != "",
 			"rate_limit_configured":      config.RateLimitPerMinute > 0,
 			"policy":                     policyPayload(svc, config),
+			"redaction":                  redactionPayload(config),
 		},
 	}
 }

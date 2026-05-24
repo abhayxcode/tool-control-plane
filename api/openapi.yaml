@@ -663,6 +663,15 @@ components:
               type: boolean
             policy:
               $ref: "#/components/schemas/PolicyListResponse"
+            redaction:
+              type: object
+              required: [source, redaction_file_set]
+              properties:
+                source:
+                  type: string
+                  enum: [default, file]
+                redaction_file_set:
+                  type: boolean
     ToolCallRequest:
       type: object
       required: [org_id, actor_user_id, agent_run_id, service_id, environment, capability, action]

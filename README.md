@@ -53,6 +53,13 @@ Request tracing:
 - tool-call responses and stored records include `route_trace` with selected provider, adapter availability, alternate configured providers, and routing reason
 - stored tool-call records include `request_id`, redacted arguments, redacted results, provider errors, and route traces
 
+Redaction policy:
+
+- global secret markers still redact tokens, passwords, private keys, authorization headers, cookies, raw logs, and file contents
+- set `TOOL_CONTROL_PLANE_REDACTION_FILE=examples/redaction.example.json` to add exact-key policies by capability, provider, or `capability_id@provider`
+- policy fields are `sensitive_argument_keys`, `sensitive_result_keys`, and optional `max_string_length`
+- redaction policy can only add redaction or tighten string bounds; it cannot unredact globally sensitive markers
+
 Rate limiting:
 
 - disabled by default
@@ -144,6 +151,7 @@ Policy config:
 - rules can match `org_id`, `actor_user_id`, `service_id`, `environment`, `capability`, `action`, `risk_level`, and `provider`
 - rules only apply to registered capabilities; policy config cannot enable unknown tools
 - `GET /v1/policies` exposes loaded rules and source metadata for admin/debug views
+- `GET /v1/readiness` exposes redaction source metadata without returning the raw redaction policy
 
 `GET /v1/readiness` returns the same non-secret provider readiness plus capability count, store/auth/rate-limit checks, optional demo repository access check, and blockers. Set `TOOL_CONTROL_PLANE_DEMO_REPOSITORY=owner/repo` to let readiness verify that the configured GitHub token/App can read the pushed demo repository. Majdoor uses this endpoint for demo and internal-alpha preflight.
 
@@ -341,6 +349,7 @@ Configuration:
 - `TOOL_CONTROL_PLANE_STORE`
 - `TOOL_CONTROL_PLANE_SQLITE_PATH`
 - `TOOL_CONTROL_PLANE_POLICY_FILE`
+- `TOOL_CONTROL_PLANE_REDACTION_FILE`
 - `TOOL_CONTROL_PLANE_CODE_PROVIDER`
 - `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER`
 - `TOOL_CONTROL_PLANE_ERRORS_PROVIDER`

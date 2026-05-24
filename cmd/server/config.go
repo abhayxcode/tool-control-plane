@@ -20,6 +20,7 @@ type Config struct {
 	Store                       string
 	SQLitePath                  string
 	PolicyFile                  string
+	RedactionFile               string
 	CodeProvider                string
 	DeployProvider              string
 	ErrorsProvider              string
@@ -103,6 +104,7 @@ func configFromEnv() (Config, error) {
 		Store:                     os.Getenv("TOOL_CONTROL_PLANE_STORE"),
 		SQLitePath:                os.Getenv("TOOL_CONTROL_PLANE_SQLITE_PATH"),
 		PolicyFile:                os.Getenv("TOOL_CONTROL_PLANE_POLICY_FILE"),
+		RedactionFile:             os.Getenv("TOOL_CONTROL_PLANE_REDACTION_FILE"),
 		CodeProvider:              os.Getenv("TOOL_CONTROL_PLANE_CODE_PROVIDER"),
 		DeployProvider:            os.Getenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER"),
 		ErrorsProvider:            os.Getenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER"),
@@ -199,6 +201,7 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 	policy := controlplane.PolicyEngine(controlplane.StaticPolicyEngine{})
 	adapters := controlplane.DefaultAdapterRegistry()
 	store := controlplane.Store(controlplane.NewMemoryStore())
+	redaction := controlplane.DefaultRedactionPolicyRegistry()
 	var githubConfig *controlplane.GitHubAdapterConfig
 	var sentryConfig *controlplane.SentryAdapterConfig
 	var prometheusConfig *controlplane.PrometheusAdapterConfig
@@ -306,6 +309,17 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 		}
 		policy = configuredPolicy
 	}
+	if strings.TrimSpace(config.RedactionFile) != "" {
+		data, err := os.ReadFile(config.RedactionFile)
+		if err != nil {
+			return nil, fmt.Errorf("read redaction file: %w", err)
+		}
+		redactionConfig, err := controlplane.ParseRedactionPolicyRegistry(data)
+		if err != nil {
+			return nil, err
+		}
+		redaction = redactionConfig
+	}
 	if config.Store == "sqlite" || config.SQLitePath != "" {
 		path := config.SQLitePath
 		if path == "" {
@@ -318,10 +332,11 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 		store = sqliteStore
 	}
 	return controlplane.NewServiceWithOptions(controlplane.ServiceOptions{
-		Registry: registry,
-		Policy:   policy,
-		Adapters: adapters,
-		Store:    store,
+		Registry:  registry,
+		Policy:    policy,
+		Adapters:  adapters,
+		Store:     store,
+		Redaction: redaction,
 	}), nil
 }
 

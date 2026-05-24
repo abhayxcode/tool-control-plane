@@ -14,6 +14,16 @@ func (routeTraceAdapter) Execute(definition CapabilityDefinition, req ToolCallRe
 	}, nil
 }
 
+type redactionPolicyAdapter struct{}
+
+func (redactionPolicyAdapter) Execute(definition CapabilityDefinition, req ToolCallRequest) (map[string]any, error) {
+	return map[string]any{
+		"diagnostic_blob": "raw diagnostic payload",
+		"note":            strings.Repeat("n", 40),
+		"safe":            "kept",
+	}, nil
+}
+
 func TestCapabilitiesExposeStableMetadata(t *testing.T) {
 	svc := NewService()
 	capabilities := svc.Capabilities()
@@ -355,6 +365,66 @@ func TestCallToolStoresRedactedToolCallRecord(t *testing.T) {
 	}
 	if stored.Status != "success" || stored.Provider != "mock" {
 		t.Fatalf("expected stored success record")
+	}
+}
+
+func TestCallToolUsesCapabilityProviderRedactionPolicy(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(map[string]string{
+		"metrics.get_service_health": "custom_metrics",
+	})
+	svc := NewServiceWithOptions(ServiceOptions{
+		Registry: registry,
+		Adapters: NewAdapterRegistry(map[string]ToolAdapter{
+			"custom_metrics": redactionPolicyAdapter{},
+		}),
+		Redaction: NewRedactionPolicyRegistry(RedactionPolicyRegistryOptions{
+			ByCapabilityProvider: map[string]RedactionPolicy{
+				"metrics.get_service_health@custom_metrics": {
+					SensitiveArgumentKeys: []string{"diagnostic_hint"},
+					SensitiveResultKeys:   []string{"diagnostic_blob"},
+					MaxStringLength:       12,
+				},
+			},
+		}),
+	})
+
+	result := svc.CallTool(ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "metrics",
+		Action:      "get_service_health",
+		Arguments: map[string]any{
+			"diagnostic_hint": "must-hide",
+			"safe":            "kept",
+		},
+	})
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %#v", result)
+	}
+
+	records := svc.ToolCalls()
+	if len(records) != 1 {
+		t.Fatalf("expected one tool call record")
+	}
+	record := records[0]
+	if record.Arguments["diagnostic_hint"] != "[redacted]" {
+		t.Fatalf("expected custom argument key redacted")
+	}
+	if record.Arguments["safe"] != "kept" {
+		t.Fatalf("expected safe argument retained")
+	}
+	if record.Result["diagnostic_blob"] != "[redacted]" {
+		t.Fatalf("expected custom result key redacted")
+	}
+	note, ok := record.Result["note"].(string)
+	if !ok || note != "nnnnnnnnnnnn...[truncated]" {
+		t.Fatalf("expected policy max string length, got %#v", record.Result["note"])
+	}
+	if record.Result["safe"] != "kept" {
+		t.Fatalf("expected safe result retained")
 	}
 }
 

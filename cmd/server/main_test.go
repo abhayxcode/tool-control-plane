@@ -467,6 +467,55 @@ func TestNewServiceFromConfigRejectsInvalidPolicyFile(t *testing.T) {
 	}
 }
 
+func TestNewServiceFromConfigLoadsRedactionFile(t *testing.T) {
+	redactionPath := filepath.Join(t.TempDir(), "redaction.json")
+	err := os.WriteFile(redactionPath, []byte(`{
+		"by_capability": {
+			"metrics.get_service_health": {
+				"sensitive_result_keys": ["status"]
+			}
+		}
+	}`), 0o600)
+	if err != nil {
+		t.Fatalf("write redaction file: %v", err)
+	}
+	svc, err := newServiceFromConfig(Config{RedactionFile: redactionPath})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+
+	result := svc.CallTool(controlplane.ToolCallRequest{
+		OrgID:       "default",
+		ActorUserID: "local-user",
+		AgentRunID:  "run_123",
+		ServiceID:   "backend",
+		Environment: "prod",
+		Capability:  "metrics",
+		Action:      "get_service_health",
+	})
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %#v", result)
+	}
+	records := svc.ToolCalls()
+	if len(records) != 1 {
+		t.Fatalf("expected one tool call record")
+	}
+	if records[0].Result["status"] != "[redacted]" {
+		t.Fatalf("expected redaction config to redact status, got %#v", records[0].Result["status"])
+	}
+}
+
+func TestNewServiceFromConfigRejectsInvalidRedactionFile(t *testing.T) {
+	redactionPath := filepath.Join(t.TempDir(), "redaction.json")
+	err := os.WriteFile(redactionPath, []byte(`{"default":{"max_string_length":-1}}`), 0o600)
+	if err != nil {
+		t.Fatalf("write redaction file: %v", err)
+	}
+	if _, err := newServiceFromConfig(Config{RedactionFile: redactionPath}); err == nil {
+		t.Fatalf("expected invalid redaction config error")
+	}
+}
+
 func TestMCPInitializeAndToolList(t *testing.T) {
 	mux := newMux(controlplane.NewService())
 	initReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)))
@@ -890,6 +939,7 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_SHUTDOWN_TIMEOUT", "2s")
 	t.Setenv("TOOL_CONTROL_PLANE_STORE", "sqlite")
 	t.Setenv("TOOL_CONTROL_PLANE_SQLITE_PATH", "/tmp/controlplane.sqlite3")
+	t.Setenv("TOOL_CONTROL_PLANE_REDACTION_FILE", "/tmp/redaction.json")
 	t.Setenv("TOOL_CONTROL_PLANE_CODE_PROVIDER", "github")
 	t.Setenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER", "github")
 	t.Setenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER", "sentry")
@@ -947,6 +997,9 @@ func TestConfigFromEnv(t *testing.T) {
 	}
 	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
 		t.Fatalf("unexpected store config")
+	}
+	if config.RedactionFile != "/tmp/redaction.json" {
+		t.Fatalf("unexpected redaction file: %q", config.RedactionFile)
 	}
 	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.MetricsProvider != "prometheus" || config.RuntimeProvider != "kubernetes" || config.DocsProvider != "github" || config.InternalAPIProvider != "generic_http" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
