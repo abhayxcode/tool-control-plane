@@ -54,6 +54,8 @@ GitHub adapter:
 - set `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER=github` to route `deploy.get_recent_deploys` to the GitHub adapter
 - set `GITHUB_TOKEN` before using the GitHub adapter
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
+- optional `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS` controls retry attempts for retryable GitHub read requests, default `3`
+- optional `TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF` controls linear retry backoff, default `200ms`
 - `code_host.get_recent_changes` is implemented against recent merged GitHub pull requests
 - `code_host.get_file` is implemented against the GitHub Contents API and returns decoded text content for patch planning
 - `code_host.get_pull_request` is implemented against GitHub pull request details and returns merge state plus head/base metadata
@@ -69,7 +71,7 @@ Demo provider configs:
 - `examples/demo.mock.env` keeps all code, CI, and deployment calls on mock providers.
 - `examples/demo.github.env.example` documents the real GitHub provider variables. Copy it to a private ignored file before adding credentials.
 
-`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy providers, whether a GitHub token is configured, store mode, readiness, and warnings. It intentionally does not return secret values.
+`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy providers, whether a GitHub token is configured, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
 
 `GET /v1/readiness` returns the same non-secret provider readiness plus capability count, store/auth/rate-limit checks, optional demo repository access check, and blockers. Set `TOOL_CONTROL_PLANE_DEMO_REPOSITORY=owner/repo` to let readiness verify that the configured GitHub token/App can read the pushed demo repository. Majdoor uses this endpoint for demo and internal-alpha preflight.
 
@@ -193,6 +195,8 @@ Configuration:
 - `TOOL_CONTROL_PLANE_SQLITE_PATH`
 - `TOOL_CONTROL_PLANE_CODE_PROVIDER`
 - `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER`
+- `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS`
+- `TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF`
 - `GITHUB_TOKEN`
 - `GITHUB_API_BASE_URL`
 

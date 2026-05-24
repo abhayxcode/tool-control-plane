@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -10,10 +11,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const GitHubProvider = "github"
 const githubLogExcerptLimit = 8000
+const defaultGitHubHTTPMaxAttempts = 3
+const defaultGitHubHTTPRetryBackoff = 200 * time.Millisecond
 
 type githubFileChange struct {
 	Path    string
@@ -21,15 +25,19 @@ type githubFileChange struct {
 }
 
 type GitHubAdapterConfig struct {
-	Token   string
-	BaseURL string
-	Client  *http.Client
+	Token        string
+	BaseURL      string
+	Client       *http.Client
+	MaxAttempts  int
+	RetryBackoff time.Duration
 }
 
 type GitHubAdapter struct {
-	token   string
-	baseURL string
-	client  *http.Client
+	token        string
+	baseURL      string
+	client       *http.Client
+	maxAttempts  int
+	retryBackoff time.Duration
 }
 
 func NewGitHubAdapter(config GitHubAdapterConfig) GitHubAdapter {
@@ -41,10 +49,23 @@ func NewGitHubAdapter(config GitHubAdapterConfig) GitHubAdapter {
 	if client == nil {
 		client = http.DefaultClient
 	}
+	maxAttempts := config.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = defaultGitHubHTTPMaxAttempts
+	}
+	retryBackoff := config.RetryBackoff
+	if retryBackoff < 0 {
+		retryBackoff = 0
+	}
+	if retryBackoff == 0 && config.MaxAttempts == 0 {
+		retryBackoff = defaultGitHubHTTPRetryBackoff
+	}
 	return GitHubAdapter{
-		token:   config.Token,
-		baseURL: baseURL,
-		client:  client,
+		token:        config.Token,
+		baseURL:      baseURL,
+		client:       client,
+		maxAttempts:  maxAttempts,
+		retryBackoff: retryBackoff,
 	}
 }
 
@@ -629,7 +650,7 @@ func (a GitHubAdapter) ensureGitHubBranch(owner string, repo string, base string
 }
 
 func (a GitHubAdapter) githubRefExists(path string) (bool, error) {
-	body, _, status, err := a.doStatus(http.MethodGet, path, "application/vnd.github+json", nil)
+	body, requestURL, status, attempts, err := a.doStatus(http.MethodGet, path, "application/vnd.github+json", nil)
 	if err != nil {
 		return false, err
 	}
@@ -637,7 +658,7 @@ func (a GitHubAdapter) githubRefExists(path string) (bool, error) {
 		return false, nil
 	}
 	if status < 200 || status > 299 {
-		return false, fmt.Errorf("github API request failed with status %d: %s", status, strings.TrimSpace(string(body)))
+		return false, newGitHubRequestError(http.MethodGet, requestURL, status, body, attempts, false, nil)
 	}
 	return true, nil
 }
@@ -667,7 +688,7 @@ func (a GitHubAdapter) upsertGitHubFiles(owner string, repo string, branch strin
 
 func (a GitHubAdapter) githubFileSHA(owner string, repo string, branch string, filePath string) (string, error) {
 	requestPath := githubContentAPIPath(owner, repo, filePath) + "?ref=" + url.QueryEscape(branch)
-	body, _, status, err := a.doStatus(http.MethodGet, requestPath, "application/vnd.github+json", nil)
+	body, requestURL, status, attempts, err := a.doStatus(http.MethodGet, requestPath, "application/vnd.github+json", nil)
 	if err != nil {
 		return "", err
 	}
@@ -675,7 +696,7 @@ func (a GitHubAdapter) githubFileSHA(owner string, repo string, branch string, f
 		return "", nil
 	}
 	if status < 200 || status > 299 {
-		return "", fmt.Errorf("github API request failed with status %d: %s", status, strings.TrimSpace(string(body)))
+		return "", newGitHubRequestError(http.MethodGet, requestURL, status, body, attempts, false, nil)
 	}
 	var response githubContentResponse
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -743,43 +764,150 @@ func (a GitHubAdapter) get(pathOrURL string, accept string) ([]byte, string, err
 }
 
 func (a GitHubAdapter) do(method string, pathOrURL string, accept string, requestBody io.Reader) ([]byte, string, error) {
-	body, requestURL, status, err := a.doStatus(method, pathOrURL, accept, requestBody)
+	body, requestURL, status, attempts, err := a.doStatus(method, pathOrURL, accept, requestBody)
 	if err != nil {
 		return nil, "", err
 	}
 	if status < 200 || status > 299 {
-		return nil, "", fmt.Errorf("github API request failed with status %d: %s", status, strings.TrimSpace(string(body)))
+		return nil, "", newGitHubRequestError(method, requestURL, status, body, attempts, false, nil)
 	}
 	return body, requestURL, nil
 }
 
-func (a GitHubAdapter) doStatus(method string, pathOrURL string, accept string, requestBody io.Reader) ([]byte, string, int, error) {
+func (a GitHubAdapter) doStatus(method string, pathOrURL string, accept string, requestBody io.Reader) ([]byte, string, int, int, error) {
 	requestURL := pathOrURL
 	if !strings.HasPrefix(pathOrURL, "http://") && !strings.HasPrefix(pathOrURL, "https://") {
 		requestURL = a.baseURL + pathOrURL
 	}
-	httpReq, err := http.NewRequest(method, requestURL, requestBody)
-	if err != nil {
-		return nil, "", 0, err
-	}
-	httpReq.Header.Set("Accept", accept)
-	httpReq.Header.Set("Authorization", "Bearer "+a.token)
-	httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	var requestBodyBytes []byte
 	if requestBody != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
+		bodyBytes, err := io.ReadAll(requestBody)
+		if err != nil {
+			return nil, "", 0, 0, err
+		}
+		requestBodyBytes = bodyBytes
 	}
 
-	httpResp, err := a.client.Do(httpReq)
-	if err != nil {
-		return nil, "", 0, err
-	}
-	defer httpResp.Body.Close()
+	maxAttempts := a.attemptsForMethod(method)
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var attemptBody io.Reader
+		if requestBodyBytes != nil {
+			attemptBody = bytes.NewReader(requestBodyBytes)
+		}
+		httpReq, err := http.NewRequest(method, requestURL, attemptBody)
+		if err != nil {
+			return nil, "", 0, attempt, err
+		}
+		httpReq.Header.Set("Accept", accept)
+		httpReq.Header.Set("Authorization", "Bearer "+a.token)
+		httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if requestBodyBytes != nil {
+			httpReq.Header.Set("Content-Type", "application/json")
+		}
 
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return nil, "", 0, err
+		httpResp, err := a.client.Do(httpReq)
+		if err != nil {
+			if attempt < maxAttempts {
+				a.sleepBeforeRetry(attempt)
+				continue
+			}
+			return nil, "", 0, attempt, newGitHubRequestError(method, requestURL, 0, nil, attempt, true, err)
+		}
+		body, readErr := io.ReadAll(httpResp.Body)
+		closeErr := httpResp.Body.Close()
+		if readErr != nil {
+			if attempt < maxAttempts {
+				a.sleepBeforeRetry(attempt)
+				continue
+			}
+			return nil, requestURL, httpResp.StatusCode, attempt, newGitHubRequestError(method, requestURL, httpResp.StatusCode, nil, attempt, true, readErr)
+		}
+		if closeErr != nil {
+			if attempt < maxAttempts {
+				a.sleepBeforeRetry(attempt)
+				continue
+			}
+			return nil, requestURL, httpResp.StatusCode, attempt, newGitHubRequestError(method, requestURL, httpResp.StatusCode, nil, attempt, true, closeErr)
+		}
+		if retryableGitHubStatus(httpResp.StatusCode) && attempt < maxAttempts {
+			a.sleepBeforeRetry(attempt)
+			continue
+		}
+		return body, requestURL, httpResp.StatusCode, attempt, nil
 	}
-	return body, requestURL, httpResp.StatusCode, nil
+	return nil, requestURL, 0, maxAttempts, newGitHubRequestError(method, requestURL, 0, nil, maxAttempts, true, errors.New("github API request exhausted retry attempts"))
+}
+
+func (a GitHubAdapter) attemptsForMethod(method string) int {
+	if method == http.MethodGet || method == http.MethodHead {
+		if a.maxAttempts > 0 {
+			return a.maxAttempts
+		}
+		return 1
+	}
+	return 1
+}
+
+func (a GitHubAdapter) sleepBeforeRetry(attempt int) {
+	if a.retryBackoff <= 0 {
+		return
+	}
+	time.Sleep(time.Duration(attempt) * a.retryBackoff)
+}
+
+func retryableGitHubStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusRequestTimeout || status >= 500
+}
+
+type githubRequestError struct {
+	Method     string
+	URL        string
+	StatusCode int
+	Body       string
+	Attempts   int
+	Retryable  bool
+	Cause      error
+}
+
+func newGitHubRequestError(method string, requestURL string, statusCode int, body []byte, attempts int, retryable bool, cause error) githubRequestError {
+	if statusCode != 0 {
+		retryable = retryableGitHubStatus(statusCode)
+	}
+	return githubRequestError{
+		Method:     method,
+		URL:        requestURL,
+		StatusCode: statusCode,
+		Body:       strings.TrimSpace(string(body)),
+		Attempts:   attempts,
+		Retryable:  retryable,
+		Cause:      cause,
+	}
+}
+
+func (e githubRequestError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("github API %s %s failed after %d attempt(s): %v", e.Method, e.URL, e.Attempts, e.Cause)
+	}
+	if e.Body != "" {
+		return fmt.Sprintf("github API %s %s failed with status %d after %d attempt(s): %s", e.Method, e.URL, e.StatusCode, e.Attempts, e.Body)
+	}
+	return fmt.Sprintf("github API %s %s failed with status %d after %d attempt(s)", e.Method, e.URL, e.StatusCode, e.Attempts)
+}
+
+func (e githubRequestError) Unwrap() error {
+	return e.Cause
+}
+
+func (e githubRequestError) ToolCallError() ToolCallError {
+	return ToolCallError{
+		Provider:   GitHubProvider,
+		Category:   "github_api",
+		Operation:  e.Method,
+		StatusCode: e.StatusCode,
+		Attempts:   e.Attempts,
+		Retryable:  e.Retryable,
+		Message:    e.Error(),
+	}
 }
 
 func githubRepoArgs(action string, args map[string]any) (string, string, error) {

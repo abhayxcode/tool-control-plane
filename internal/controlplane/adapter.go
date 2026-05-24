@@ -1,6 +1,9 @@
 package controlplane
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 type ToolAdapter interface {
 	Execute(definition CapabilityDefinition, req ToolCallRequest) (map[string]any, error)
@@ -8,6 +11,10 @@ type ToolAdapter interface {
 
 type AdapterRegistry struct {
 	byProvider map[string]ToolAdapter
+}
+
+type toolCallErrorDetailer interface {
+	ToolCallError() ToolCallError
 }
 
 func NewAdapterRegistry(adapters map[string]ToolAdapter) AdapterRegistry {
@@ -30,11 +37,21 @@ func (r AdapterRegistry) Execute(definition CapabilityDefinition, req ToolCallRe
 
 	result, err := adapter.Execute(definition, req)
 	if err != nil {
+		toolCallError := ToolCallError{
+			Provider: definition.Provider,
+			Category: "provider_error",
+			Message:  err.Error(),
+		}
+		var detailer toolCallErrorDetailer
+		if errors.As(err, &detailer) {
+			toolCallError = detailer.ToolCallError()
+		}
 		return ToolCallResponse{
 			Status:    "error",
 			RiskLevel: definition.RiskLevel,
 			Provider:  definition.Provider,
 			Reason:    err.Error(),
+			Error:     &toolCallError,
 		}
 	}
 

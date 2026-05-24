@@ -345,9 +345,29 @@ components:
           $ref: "#/components/schemas/JSONObject"
         reason:
           type: string
+        error:
+          $ref: "#/components/schemas/ToolCallError"
         approval_required:
           type: boolean
         approval_request_id:
+          type: string
+    ToolCallError:
+      type: object
+      required: [retryable]
+      properties:
+        provider:
+          type: string
+        category:
+          type: string
+        operation:
+          type: string
+        status_code:
+          type: integer
+        attempts:
+          type: integer
+        retryable:
+          type: boolean
+        message:
           type: string
     AuditEntry:
       type: object

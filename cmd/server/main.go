@@ -165,6 +165,8 @@ func providerConfigSummary(config Config) map[string]any {
 		"github_selected":         githubSelected,
 		"github_token_configured": githubConfigured,
 		"github_base_url_set":     strings.TrimSpace(config.GitHubBaseURL) != "",
+		"github_max_attempts":     githubMaxAttempts(config),
+		"github_retry_backoff_ms": int(githubRetryBackoff(config) / time.Millisecond),
 		"demo_repository":         strings.TrimSpace(config.DemoRepository),
 		"store":                   providerStore(config),
 		"ready":                   !githubSelected || githubConfigured,
@@ -281,6 +283,20 @@ func providerStore(config Config) string {
 		return "sqlite"
 	}
 	return "memory"
+}
+
+func githubMaxAttempts(config Config) int {
+	if config.GitHubMaxAttempts > 0 {
+		return config.GitHubMaxAttempts
+	}
+	return 3
+}
+
+func githubRetryBackoff(config Config) time.Duration {
+	if config.GitHubRetryBackoff > 0 {
+		return config.GitHubRetryBackoff
+	}
+	return 200 * time.Millisecond
 }
 
 func withBearerAuth(next http.Handler, token string) http.Handler {

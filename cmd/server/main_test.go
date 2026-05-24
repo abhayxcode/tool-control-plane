@@ -161,6 +161,8 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_DEPLOY_PROVIDER", "github")
 	t.Setenv("GITHUB_TOKEN", "github-token")
 	t.Setenv("GITHUB_API_BASE_URL", "https://github.example/api/v3")
+	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS", "4")
+	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF", "25ms")
 	t.Setenv("TOOL_CONTROL_PLANE_DEMO_REPOSITORY", "acme/backend")
 
 	config, err := configFromEnv()
@@ -185,6 +187,9 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
 	}
+	if config.GitHubMaxAttempts != 4 || config.GitHubRetryBackoff != 25*time.Millisecond {
+		t.Fatalf("unexpected GitHub retry config")
+	}
 }
 
 func TestConfigFromEnvRejectsInvalidRateLimit(t *testing.T) {
@@ -200,6 +205,19 @@ func TestConfigFromEnvRejectsInvalidShutdownTimeout(t *testing.T) {
 	_, err := configFromEnv()
 	if err == nil {
 		t.Fatalf("expected invalid shutdown timeout error")
+	}
+}
+
+func TestConfigFromEnvRejectsInvalidGitHubRetryConfig(t *testing.T) {
+	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS", "0")
+	if _, err := configFromEnv(); err == nil {
+		t.Fatalf("expected invalid GitHub max attempts error")
+	}
+
+	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS", "2")
+	t.Setenv("TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF", "nope")
+	if _, err := configFromEnv(); err == nil {
+		t.Fatalf("expected invalid GitHub retry backoff error")
 	}
 }
 
@@ -363,6 +381,12 @@ func TestReadinessReportsReadyProviderConfig(t *testing.T) {
 	}
 	if body.Checks.ProviderConfig["github_token_configured"] != true {
 		t.Fatalf("expected configured github token")
+	}
+	if body.Checks.ProviderConfig["github_max_attempts"] != float64(3) {
+		t.Fatalf("expected default github max attempts, got %#v", body.Checks.ProviderConfig["github_max_attempts"])
+	}
+	if body.Checks.ProviderConfig["github_retry_backoff_ms"] != float64(200) {
+		t.Fatalf("expected default github retry backoff, got %#v", body.Checks.ProviderConfig["github_retry_backoff_ms"])
 	}
 	if body.Checks.RepositoryAccess["status"] != "ok" {
 		t.Fatalf("expected repository access ok, got %#v", body.Checks.RepositoryAccess)

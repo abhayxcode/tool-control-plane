@@ -92,6 +92,127 @@ func TestGitHubAdapterRejectsUnsupportedCapabilities(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapterRetriesRetryableReadRequests(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if r.URL.Path != "/repos/acme/backend/commits/main/check-runs" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if attempts == 1 {
+			http.Error(w, "temporary github outage", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"check_runs":[]}`))
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:        "test-token",
+		BaseURL:      server.URL,
+		MaxAttempts:  3,
+		RetryBackoff: 0,
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "ci.get_checks",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"ref":        "main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected retry success, got %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected two attempts, got %d", attempts)
+	}
+	if result["status"] != "pending" {
+		t.Fatalf("unexpected status: %#v", result["status"])
+	}
+}
+
+func TestGitHubAdapterReturnsRetryMetadataOnProviderError(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "temporary github outage", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	registry := NewAdapterRegistry(map[string]ToolAdapter{
+		GitHubProvider: NewGitHubAdapter(GitHubAdapterConfig{
+			Token:        "test-token",
+			BaseURL:      server.URL,
+			MaxAttempts:  2,
+			RetryBackoff: 0,
+		}),
+	})
+	response := registry.Execute(CapabilityDefinition{
+		ID:         "ci.get_checks",
+		RiskLevel:  RiskRead,
+		Provider:   GitHubProvider,
+		Capability: "ci",
+		Action:     "get_checks",
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"ref":        "main",
+		},
+	})
+
+	if response.Status != "error" {
+		t.Fatalf("expected error, got %q", response.Status)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected two attempts, got %d", attempts)
+	}
+	if response.Error == nil {
+		t.Fatalf("expected provider error metadata")
+	}
+	if response.Error.Provider != GitHubProvider || response.Error.Category != "github_api" {
+		t.Fatalf("unexpected provider error: %#v", response.Error)
+	}
+	if response.Error.StatusCode != http.StatusBadGateway || response.Error.Attempts != 2 || !response.Error.Retryable {
+		t.Fatalf("unexpected retry metadata: %#v", response.Error)
+	}
+}
+
+func TestGitHubAdapterDoesNotRetryWriteRequests(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "temporary github outage", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:        "test-token",
+		BaseURL:      server.URL,
+		MaxAttempts:  3,
+		RetryBackoff: 0,
+	})
+	_, err := adapter.Execute(CapabilityDefinition{
+		ID:       "code_host.create_draft_pr",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"title":      "Draft: test",
+			"head":       "majdoor/test",
+			"base":       "main",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected write failure")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected one write attempt, got %d", attempts)
+	}
+}
+
 func TestGitHubAdapterCreatesDraftPR(t *testing.T) {
 	var sawAuth bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

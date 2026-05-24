@@ -20,8 +20,19 @@ type ToolCallResponse struct {
 	Provider          string         `json:"provider,omitempty"`
 	Result            map[string]any `json:"result,omitempty"`
 	Reason            string         `json:"reason,omitempty"`
+	Error             *ToolCallError `json:"error,omitempty"`
 	ApprovalRequired  bool           `json:"approval_required,omitempty"`
 	ApprovalRequestID string         `json:"approval_request_id,omitempty"`
+}
+
+type ToolCallError struct {
+	Provider   string `json:"provider,omitempty"`
+	Category   string `json:"category,omitempty"`
+	Operation  string `json:"operation,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Attempts   int    `json:"attempts,omitempty"`
+	Retryable  bool   `json:"retryable"`
+	Message    string `json:"message,omitempty"`
 }
 
 type AuditEntry struct {

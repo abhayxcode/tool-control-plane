@@ -22,6 +22,8 @@ type Config struct {
 	DeployProvider     string
 	GitHubToken        string
 	GitHubBaseURL      string
+	GitHubMaxAttempts  int
+	GitHubRetryBackoff time.Duration
 	DemoRepository     string
 }
 
@@ -54,6 +56,22 @@ func configFromEnv() (Config, error) {
 		}
 		config.RateLimitPerMinute = limit
 	}
+	rawGitHubMaxAttempts := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS"))
+	if rawGitHubMaxAttempts != "" {
+		maxAttempts, err := strconv.Atoi(rawGitHubMaxAttempts)
+		if err != nil || maxAttempts <= 0 {
+			return Config{}, fmt.Errorf("invalid TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS: must be a positive integer")
+		}
+		config.GitHubMaxAttempts = maxAttempts
+	}
+	rawGitHubRetryBackoff := strings.TrimSpace(os.Getenv("TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF"))
+	if rawGitHubRetryBackoff != "" {
+		backoff, err := time.ParseDuration(rawGitHubRetryBackoff)
+		if err != nil || backoff < 0 {
+			return Config{}, fmt.Errorf("invalid TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF: must be a non-negative duration")
+		}
+		config.GitHubRetryBackoff = backoff
+	}
 	return config, nil
 }
 
@@ -75,8 +93,10 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 		}
 		registry = registry.WithProviderOverrides(overrides)
 		adapters = controlplane.DefaultAdapterRegistryWithGitHub(controlplane.GitHubAdapterConfig{
-			Token:   config.GitHubToken,
-			BaseURL: config.GitHubBaseURL,
+			Token:        config.GitHubToken,
+			BaseURL:      config.GitHubBaseURL,
+			MaxAttempts:  config.GitHubMaxAttempts,
+			RetryBackoff: config.GitHubRetryBackoff,
 		})
 	}
 	if config.Store == "sqlite" || config.SQLitePath != "" {
