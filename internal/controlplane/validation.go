@@ -101,6 +101,13 @@ func (v StaticRequestValidator) Validate(req ToolCallRequest, definition Capabil
 		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "logs_url", "job_id") {
 			return fmt.Errorf("github ci.get_logs requires logs_url or job_id argument")
 		}
+	case "docs.search_runbooks":
+		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "repository", "owner") {
+			return fmt.Errorf("github docs.search_runbooks requires repository or owner and repo arguments")
+		}
+		if definition.Provider == GitHubProvider && !hasAnyArg(req.Arguments, "runbooks", "paths", "doc_paths", "path") {
+			return fmt.Errorf("github docs.search_runbooks requires runbooks, paths, doc_paths, or path arguments")
+		}
 	}
 
 	return nil

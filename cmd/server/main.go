@@ -160,7 +160,8 @@ func providerConfigSummary(config Config) map[string]any {
 	errorsProvider := providerOrMock(config.ErrorsProvider)
 	metricsProvider := providerOrMock(config.MetricsProvider)
 	runtimeProvider := providerOrMock(config.RuntimeProvider)
-	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
+	docsProvider := providerOrMock(config.DocsProvider)
+	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider || docsProvider == controlplane.GitHubProvider
 	githubTokenConfigured := strings.TrimSpace(config.GitHubToken) != ""
 	githubAppAuthConfigured := githubAppConfigured(config)
 	githubConfigured := githubTokenConfigured || githubAppAuthConfigured
@@ -176,6 +177,7 @@ func providerConfigSummary(config Config) map[string]any {
 		"errors_provider":              errorsProvider,
 		"metrics_provider":             metricsProvider,
 		"runtime_provider":             runtimeProvider,
+		"docs_provider":                docsProvider,
 		"github_selected":              githubSelected,
 		"github_auth_mode":             githubAuthMode(config),
 		"github_token_configured":      githubTokenConfigured,
@@ -215,7 +217,8 @@ func providerConfigBlockers(config Config) []string {
 	errorsProvider := providerOrMock(config.ErrorsProvider)
 	metricsProvider := providerOrMock(config.MetricsProvider)
 	runtimeProvider := providerOrMock(config.RuntimeProvider)
-	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
+	docsProvider := providerOrMock(config.DocsProvider)
+	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider || docsProvider == controlplane.GitHubProvider
 	if githubSelected && !githubCredentialConfigured(config) {
 		blockers = append(blockers, "GITHUB_TOKEN or GitHub App installation credentials are required when a GitHub provider is selected.")
 	}
@@ -242,7 +245,8 @@ func repositoryAccessSummary(config Config) map[string]any {
 	}
 	codeProvider := providerOrMock(config.CodeProvider)
 	deployProvider := providerOrMock(config.DeployProvider)
-	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider
+	docsProvider := providerOrMock(config.DocsProvider)
+	githubSelected := codeProvider == controlplane.GitHubProvider || deployProvider == controlplane.GitHubProvider || docsProvider == controlplane.GitHubProvider
 	if !githubSelected {
 		return map[string]any{
 			"status":     "skipped",

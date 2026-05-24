@@ -154,6 +154,32 @@ func TestNewServiceFromEnvCanRouteDeployCapabilitiesToGitHub(t *testing.T) {
 	}
 }
 
+func TestNewServiceFromEnvCanRouteDocsCapabilitiesToGitHub(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		DocsProvider: controlplane.GitHubProvider,
+		GitHubToken:  "test-token",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	var foundGitHubDocs bool
+	var foundMockMetrics bool
+	for _, detail := range svc.CapabilityDetails() {
+		if detail.ID == "docs.search_runbooks" && detail.Provider == controlplane.GitHubProvider {
+			foundGitHubDocs = true
+		}
+		if detail.ID == "metrics.get_service_health" && detail.Provider == "mock" {
+			foundMockMetrics = true
+		}
+	}
+	if !foundGitHubDocs {
+		t.Fatalf("expected docs.search_runbooks to use github provider")
+	}
+	if !foundMockMetrics {
+		t.Fatalf("expected metrics capability to remain mock provider")
+	}
+}
+
 func TestNewServiceFromEnvCanRouteErrorCapabilitiesToSentry(t *testing.T) {
 	svc, err := newServiceFromConfig(Config{
 		ErrorsProvider:  controlplane.SentryProvider,
@@ -244,6 +270,7 @@ func TestConfigFromEnv(t *testing.T) {
 	t.Setenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER", "sentry")
 	t.Setenv("TOOL_CONTROL_PLANE_METRICS_PROVIDER", "prometheus")
 	t.Setenv("TOOL_CONTROL_PLANE_RUNTIME_PROVIDER", "kubernetes")
+	t.Setenv("TOOL_CONTROL_PLANE_DOCS_PROVIDER", "github")
 	t.Setenv("GITHUB_TOKEN", "github-token")
 	t.Setenv("GITHUB_APP_ID", "12345")
 	t.Setenv("GITHUB_APP_INSTALLATION_ID", "42")
@@ -287,7 +314,7 @@ func TestConfigFromEnv(t *testing.T) {
 	if config.Store != "sqlite" || config.SQLitePath != "/tmp/controlplane.sqlite3" {
 		t.Fatalf("unexpected store config")
 	}
-	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.MetricsProvider != "prometheus" || config.RuntimeProvider != "kubernetes" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
+	if config.CodeProvider != "github" || config.DeployProvider != "github" || config.ErrorsProvider != "sentry" || config.MetricsProvider != "prometheus" || config.RuntimeProvider != "kubernetes" || config.DocsProvider != "github" || config.GitHubToken != "github-token" || config.GitHubBaseURL != "https://github.example/api/v3" || config.DemoRepository != "acme/backend" {
 		t.Fatalf("unexpected GitHub config")
 	}
 	if config.SentryAuthToken != "sentry-token" || config.SentryOrg != "acme" || config.SentryProject != "backend" || config.SentryBaseURL != "https://sentry.example" {
@@ -380,6 +407,9 @@ func TestCapabilitiesExposeProviderConfigReadiness(t *testing.T) {
 	}
 	if body.ProviderConfig["runtime_provider"] != "mock" {
 		t.Fatalf("expected mock runtime provider, got %#v", body.ProviderConfig["runtime_provider"])
+	}
+	if body.ProviderConfig["docs_provider"] != "mock" {
+		t.Fatalf("expected mock docs provider, got %#v", body.ProviderConfig["docs_provider"])
 	}
 	if body.ProviderConfig["github_token_configured"] != true {
 		t.Fatalf("expected configured github token")
@@ -537,6 +567,43 @@ func TestCapabilitiesExposeKubernetesProviderConfigReadiness(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesExposeGitHubDocsProviderConfigReadiness(t *testing.T) {
+	svc, err := newServiceFromConfig(Config{
+		DocsProvider: controlplane.GitHubProvider,
+		GitHubToken:  "test-token",
+	})
+	if err != nil {
+		t.Fatalf("new service from config: %v", err)
+	}
+	mux := newMux(svc, Config{
+		DocsProvider: controlplane.GitHubProvider,
+		GitHubToken:  "test-token",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig map[string]any `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig["docs_provider"] != controlplane.GitHubProvider {
+		t.Fatalf("expected github docs provider, got %#v", body.ProviderConfig["docs_provider"])
+	}
+	if body.ProviderConfig["github_selected"] != true || body.ProviderConfig["github_token_configured"] != true {
+		t.Fatalf("expected github selected and configured, got %#v", body.ProviderConfig)
+	}
+	if body.ProviderConfig["ready"] != true {
+		t.Fatalf("expected provider config ready")
+	}
+}
+
 func TestCapabilitiesExposeGitHubAppProviderConfigReadiness(t *testing.T) {
 	mux := newMux(controlplane.NewService(), Config{
 		CodeProvider:            controlplane.GitHubProvider,
@@ -575,6 +642,35 @@ func TestCapabilitiesExposeGitHubAppProviderConfigReadiness(t *testing.T) {
 func TestCapabilitiesExposeMissingGitHubTokenWarning(t *testing.T) {
 	mux := newMux(controlplane.NewService(), Config{
 		CodeProvider: controlplane.GitHubProvider,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.Code)
+	}
+	var body struct {
+		ProviderConfig struct {
+			Ready    bool     `json:"ready"`
+			Warnings []string `json:"warnings"`
+		} `json:"provider_config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if body.ProviderConfig.Ready {
+		t.Fatalf("expected provider config not ready")
+	}
+	if len(body.ProviderConfig.Warnings) != 1 {
+		t.Fatalf("expected one warning, got %d", len(body.ProviderConfig.Warnings))
+	}
+}
+
+func TestCapabilitiesExposeMissingGitHubTokenWarningForDocsProvider(t *testing.T) {
+	mux := newMux(controlplane.NewService(), Config{
+		DocsProvider: controlplane.GitHubProvider,
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
 	resp := httptest.NewRecorder()

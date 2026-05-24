@@ -23,6 +23,7 @@ type Config struct {
 	ErrorsProvider          string
 	MetricsProvider         string
 	RuntimeProvider         string
+	DocsProvider            string
 	GitHubToken             string
 	GitHubAppID             string
 	GitHubAppInstallationID string
@@ -61,6 +62,7 @@ func configFromEnv() (Config, error) {
 		ErrorsProvider:          os.Getenv("TOOL_CONTROL_PLANE_ERRORS_PROVIDER"),
 		MetricsProvider:         os.Getenv("TOOL_CONTROL_PLANE_METRICS_PROVIDER"),
 		RuntimeProvider:         os.Getenv("TOOL_CONTROL_PLANE_RUNTIME_PROVIDER"),
+		DocsProvider:            os.Getenv("TOOL_CONTROL_PLANE_DOCS_PROVIDER"),
 		GitHubToken:             os.Getenv("GITHUB_TOKEN"),
 		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
 		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),
@@ -128,7 +130,7 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 	var prometheusConfig *controlplane.PrometheusAdapterConfig
 	var kubernetesConfig *controlplane.KubernetesAdapterConfig
 	overrides := map[string]string{}
-	if config.CodeProvider == controlplane.GitHubProvider || config.DeployProvider == controlplane.GitHubProvider {
+	if config.CodeProvider == controlplane.GitHubProvider || config.DeployProvider == controlplane.GitHubProvider || config.DocsProvider == controlplane.GitHubProvider {
 		if config.CodeProvider == controlplane.GitHubProvider {
 			for id, provider := range controlplane.GitHubProviderOverrides() {
 				overrides[id] = provider
@@ -136,6 +138,11 @@ func newServiceFromConfig(config Config) (*controlplane.Service, error) {
 		}
 		if config.DeployProvider == controlplane.GitHubProvider {
 			for id, provider := range controlplane.GitHubDeployProviderOverrides() {
+				overrides[id] = provider
+			}
+		}
+		if config.DocsProvider == controlplane.GitHubProvider {
+			for id, provider := range controlplane.GitHubDocsProviderOverrides() {
 				overrides[id] = provider
 			}
 		}

@@ -243,7 +243,7 @@ components:
           type: boolean
     ProviderConfig:
       type: object
-      required: [code_provider, deploy_provider, errors_provider, metrics_provider, runtime_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, kubernetes_selected, kubernetes_base_url_set, kubernetes_token_configured, store, ready, warnings]
+      required: [code_provider, deploy_provider, errors_provider, metrics_provider, runtime_provider, docs_provider, github_selected, github_auth_mode, github_token_configured, github_app_configured, github_base_url_set, sentry_selected, sentry_token_configured, prometheus_selected, prometheus_base_url_set, prometheus_token_configured, kubernetes_selected, kubernetes_base_url_set, kubernetes_token_configured, store, ready, warnings]
       properties:
         code_provider:
           type: string
@@ -260,6 +260,9 @@ components:
         runtime_provider:
           type: string
           example: kubernetes
+        docs_provider:
+          type: string
+          example: github
         github_selected:
           type: boolean
         github_auth_mode:

@@ -52,6 +52,7 @@ GitHub adapter:
 - default behavior keeps all capabilities on `mock`
 - set `TOOL_CONTROL_PLANE_CODE_PROVIDER=github` to route `code_host.*` and `ci.*` capabilities to the GitHub adapter
 - set `TOOL_CONTROL_PLANE_DEPLOY_PROVIDER=github` to route `deploy.get_recent_deploys` to the GitHub adapter
+- set `TOOL_CONTROL_PLANE_DOCS_PROVIDER=github` to route `docs.search_runbooks` to GitHub-backed repository markdown files
 - set `GITHUB_TOKEN` before using the GitHub adapter, or configure GitHub App auth with `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, and `GITHUB_APP_PRIVATE_KEY`/`GITHUB_APP_PRIVATE_KEY_PATH`
 - optional `GITHUB_API_BASE_URL` supports GitHub Enterprise later
 - optional `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS` controls retry attempts for retryable GitHub read requests, default `3`
@@ -66,6 +67,7 @@ GitHub adapter:
 - `ci.get_checks` also attempts to discover the failed GitHub Actions job and includes `job_id`/`logs_url` when available
 - `ci.get_logs` is implemented for direct `logs_url` and GitHub Actions `job_id` logs
 - `deploy.get_recent_deploys` is implemented against GitHub Actions workflow runs
+- `docs.search_runbooks` is implemented against the GitHub Contents API for explicitly configured markdown/runbook paths
 
 Sentry adapter:
 
@@ -96,10 +98,10 @@ Kubernetes adapter:
 
 Demo provider configs:
 
-- `examples/demo.mock.env` keeps all code, CI, deployment, errors, metrics, and runtime calls on mock providers.
+- `examples/demo.mock.env` keeps all code, CI, deployment, errors, metrics, runtime, and docs calls on mock providers.
 - `examples/demo.github.env.example` documents the real GitHub and optional Sentry/Prometheus/Kubernetes provider variables. Copy it to a private ignored file before adding credentials.
 
-`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors/metrics/runtime providers, GitHub auth mode, whether token/App credentials are configured, Sentry, Prometheus, and Kubernetes readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
+`GET /v1/capabilities` includes a safe `provider_config` block with selected code/deploy/errors/metrics/runtime/docs providers, GitHub auth mode, whether token/App credentials are configured, Sentry, Prometheus, and Kubernetes readiness flags, GitHub retry settings, store mode, readiness, and warnings. It intentionally does not return secret values.
 
 `GET /v1/readiness` returns the same non-secret provider readiness plus capability count, store/auth/rate-limit checks, optional demo repository access check, and blockers. Set `TOOL_CONTROL_PLANE_DEMO_REPOSITORY=owner/repo` to let readiness verify that the configured GitHub token/App can read the pushed demo repository. Majdoor uses this endpoint for demo and internal-alpha preflight.
 
@@ -250,6 +252,17 @@ The Prometheus response includes normalized `status`, `up`, `latency_p95_ms`, `e
 
 The Kubernetes response includes normalized `status`, `pods_ready`, pod summaries, total restart count, warning event count, bounded logs for unhealthy/restarted pods, `source_url`, and evidence. The adapter uses Kubernetes core API reads for namespaced pods, events, and pod logs.
 
+`docs.search_runbooks` accepts:
+
+- `repository`: `owner/repo`
+- or `owner` and `repo`
+- `runbooks`, `paths`, `doc_paths`, or `path` with relative markdown file paths or GitHub blob URLs
+- optional `ref`, `branch`, or `base`
+- optional `query` or `q`, defaulting to request service/environment text
+- optional `limit`, capped at 10
+
+The GitHub docs response includes normalized `matches` with title, path, snippet, score, `source_url`, and evidence. The adapter reads only explicitly supplied files and does not crawl arbitrary repository content.
+
 Planned stack:
 
 - Go service
@@ -278,6 +291,7 @@ Configuration:
 - `TOOL_CONTROL_PLANE_ERRORS_PROVIDER`
 - `TOOL_CONTROL_PLANE_METRICS_PROVIDER`
 - `TOOL_CONTROL_PLANE_RUNTIME_PROVIDER`
+- `TOOL_CONTROL_PLANE_DOCS_PROVIDER`
 - `TOOL_CONTROL_PLANE_GITHUB_MAX_ATTEMPTS`
 - `TOOL_CONTROL_PLANE_GITHUB_RETRY_BACKOFF`
 - `GITHUB_TOKEN`

@@ -914,6 +914,71 @@ func TestGitHubAdapterGetsFile(t *testing.T) {
 	}
 }
 
+func TestGitHubAdapterSearchesRunbooks(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.String())
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Query().Get("ref") != "main" {
+			t.Fatalf("unexpected ref: %q", r.URL.Query().Get("ref"))
+		}
+		contentByPath := map[string]string{
+			"/repos/acme/backend/contents/docs/backend-oncall.md":  "# Backend database timeout\n\nIf database timeout errors spike, compare pool settings and recent deploys.",
+			"/repos/acme/backend/contents/docs/ci-node-version.md": "# CI Node version\n\nIf CI fails, compare package engines and workflow Node versions.",
+		}
+		content, ok := contentByPath[r.URL.EscapedPath()]
+		if !ok {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"sha":"sha-%d","content":%q,"encoding":"base64","html_url":"https://github.com/acme/backend/blob/main/%s"}`, len(requests), base64.StdEncoding.EncodeToString([]byte(content)), strings.TrimPrefix(r.URL.EscapedPath(), "/repos/acme/backend/contents/"))
+	}))
+	defer server.Close()
+
+	adapter := NewGitHubAdapter(GitHubAdapterConfig{
+		Token:   "test-token",
+		BaseURL: server.URL,
+		Client:  server.Client(),
+	})
+	result, err := adapter.Execute(CapabilityDefinition{
+		ID:       "docs.search_runbooks",
+		Provider: GitHubProvider,
+	}, ToolCallRequest{
+		ServiceID:   "backend",
+		Environment: "prod",
+		Arguments: map[string]any{
+			"repository": "acme/backend",
+			"ref":        "main",
+			"query":      "database timeout",
+			"runbooks": []any{
+				"https://github.com/acme/backend/blob/main/docs/backend-oncall.md",
+				"docs/ci-node-version.md",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected docs result, got error: %v", err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("expected two content requests, got %#v", requests)
+	}
+	matches := result["matches"].([]map[string]any)
+	if len(matches) != 2 {
+		t.Fatalf("expected two matches, got %#v", matches)
+	}
+	if matches[0]["path"] != "docs/backend-oncall.md" {
+		t.Fatalf("expected highest scoring runbook first, got %#v", matches[0])
+	}
+	if !strings.Contains(matches[0]["snippet"].(string), "database timeout") {
+		t.Fatalf("expected matching snippet, got %#v", matches[0]["snippet"])
+	}
+	if result["source_url"] != "https://github.com/acme/backend/blob/main/docs/backend-oncall.md" {
+		t.Fatalf("unexpected source URL: %#v", result["source_url"])
+	}
+}
+
 func TestGitHubAdapterGetsPullRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/repos/acme/backend/pulls/999" {
@@ -1594,6 +1659,24 @@ func TestGitHubDeployProviderOverridesDeploymentCapability(t *testing.T) {
 	}
 	if codeHost.Provider != "mock" {
 		t.Fatalf("expected code host provider to remain mock, got %q", codeHost.Provider)
+	}
+}
+
+func TestGitHubDocsProviderOverridesRunbookCapability(t *testing.T) {
+	registry := DefaultCapabilityRegistry().WithProviderOverrides(GitHubDocsProviderOverrides())
+	docs, ok := registry.byID["docs.search_runbooks"]
+	if !ok {
+		t.Fatalf("expected docs capability")
+	}
+	if docs.Provider != GitHubProvider {
+		t.Fatalf("expected github docs provider, got %q", docs.Provider)
+	}
+	metrics, ok := registry.byID["metrics.get_service_health"]
+	if !ok {
+		t.Fatalf("expected metrics capability")
+	}
+	if metrics.Provider != "mock" {
+		t.Fatalf("expected metrics provider to remain mock, got %q", metrics.Provider)
 	}
 }
 

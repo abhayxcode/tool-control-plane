@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,28 @@ const defaultGitHubHTTPRetryBackoff = 200 * time.Millisecond
 type githubFileChange struct {
 	Path    string
 	Content string
+}
+
+type githubReadFile struct {
+	Path      string
+	Ref       string
+	SHA       string
+	Content   string
+	SourceURL string
+}
+
+type githubRunbookPath struct {
+	Path string
+	Ref  string
+}
+
+type githubRunbookMatch struct {
+	Path      string
+	Title     string
+	Snippet   string
+	Score     int
+	SourceURL string
+	SHA       string
 }
 
 type GitHubAdapterConfig struct {
@@ -98,6 +121,8 @@ func (a GitHubAdapter) Execute(definition CapabilityDefinition, req ToolCallRequ
 		return a.markReadyForReview(req)
 	case "deploy.get_recent_deploys":
 		return a.getRecentDeploys(req)
+	case "docs.search_runbooks":
+		return a.searchRunbooks(req)
 	default:
 		return nil, fmt.Errorf("github adapter does not support capability '%s'", definition.ID)
 	}
@@ -372,43 +397,98 @@ func (a GitHubAdapter) getFile(req ToolCallRequest) (map[string]any, error) {
 	if ref == "" {
 		ref, _ = stringArg(req.Arguments, "base")
 	}
-	query := url.Values{}
-	if ref != "" {
-		query.Set("ref", ref)
-	}
-	path := githubContentAPIPath(owner, repo, file.Path)
-	if encoded := query.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	var response githubContentResponse
-	if err := a.getJSON(path, &response); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(response.Content) == "" {
-		return nil, fmt.Errorf("github content response did not include file content")
-	}
-	if response.Encoding != "" && response.Encoding != "base64" {
-		return nil, fmt.Errorf("github content response used unsupported encoding %q", response.Encoding)
-	}
-	content, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(response.Content, "\n", ""))
+	content, err := a.readGitHubFile(owner, repo, file.Path, ref)
 	if err != nil {
-		return nil, fmt.Errorf("decode github file content: %w", err)
-	}
-	sourceURL := response.HTMLURL
-	if sourceURL == "" {
-		sourceURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", owner, repo, firstNonEmpty(ref, "HEAD"), file.Path)
+		return nil, err
 	}
 	return map[string]any{
 		"repository": fmt.Sprintf("%s/%s", owner, repo),
 		"owner":      owner,
 		"repo":       repo,
-		"path":       file.Path,
-		"ref":        ref,
-		"sha":        response.SHA,
-		"content":    string(content),
-		"source_url": sourceURL,
-		"evidence":   fmt.Sprintf("Read %s from %s/%s.", file.Path, owner, repo),
+		"path":       content.Path,
+		"ref":        content.Ref,
+		"sha":        content.SHA,
+		"content":    content.Content,
+		"source_url": content.SourceURL,
+		"evidence":   fmt.Sprintf("Read %s from %s/%s.", content.Path, owner, repo),
 	}, nil
+}
+
+func (a GitHubAdapter) searchRunbooks(req ToolCallRequest) (map[string]any, error) {
+	owner, repo, err := githubRepoArgs("docs.search_runbooks", req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	ref := firstStringArg(req.Arguments, "ref", "branch", "base")
+	paths := githubRunbookPathsArg(req.Arguments, owner, repo, ref)
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("github docs.search_runbooks requires runbooks, paths, doc_paths, or path arguments")
+	}
+	limit := optionalIntArg(req.Arguments, "limit", 3)
+	if limit <= 0 {
+		limit = 3
+	}
+	if limit > 10 {
+		limit = 10
+	}
+	query := firstNonEmpty(firstStringArg(req.Arguments, "query", "q"), strings.TrimSpace(req.ServiceID+" "+req.Environment))
+	matches := make([]githubRunbookMatch, 0, len(paths))
+	warnings := []string{}
+	for _, path := range paths {
+		fileRef := firstNonEmpty(path.Ref, ref)
+		file, err := a.readGitHubFile(owner, repo, path.Path, fileRef)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %s", path.Path, err.Error()))
+			continue
+		}
+		score, snippet := scoreGitHubRunbook(query, file.Content)
+		matches = append(matches, githubRunbookMatch{
+			Path:      file.Path,
+			Title:     markdownTitle(file.Content, file.Path),
+			Snippet:   snippet,
+			Score:     score,
+			SourceURL: file.SourceURL,
+			SHA:       file.SHA,
+		})
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].Score == matches[j].Score {
+			return matches[i].Path < matches[j].Path
+		}
+		return matches[i].Score > matches[j].Score
+	})
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+	resultMatches := make([]map[string]any, 0, len(matches))
+	for _, match := range matches {
+		resultMatches = append(resultMatches, map[string]any{
+			"title":      match.Title,
+			"path":       match.Path,
+			"snippet":    match.Snippet,
+			"score":      match.Score,
+			"source_url": match.SourceURL,
+			"sha":        match.SHA,
+		})
+	}
+	sourceURL := ""
+	if len(matches) > 0 {
+		sourceURL = matches[0].SourceURL
+	}
+	result := map[string]any{
+		"repository": fmt.Sprintf("%s/%s", owner, repo),
+		"owner":      owner,
+		"repo":       repo,
+		"ref":        ref,
+		"query":      query,
+		"matches":    resultMatches,
+		"source_url": sourceURL,
+		"evidence":   fmt.Sprintf("GitHub docs search read %d runbook candidate(s) from %s/%s and returned %d match(es).", len(paths), owner, repo, len(matches)),
+	}
+	if len(warnings) > 0 {
+		result["warnings"] = warnings
+	}
+	return result, nil
 }
 
 func (a GitHubAdapter) getRecentChanges(req ToolCallRequest) (map[string]any, error) {
@@ -767,6 +847,46 @@ func (a GitHubAdapter) githubFileSHA(owner string, repo string, branch string, f
 		return "", err
 	}
 	return response.SHA, nil
+}
+
+func (a GitHubAdapter) readGitHubFile(owner string, repo string, filePath string, ref string) (githubReadFile, error) {
+	file, err := newGitHubFileChange(filePath, "")
+	if err != nil {
+		return githubReadFile{}, err
+	}
+	query := url.Values{}
+	if ref != "" {
+		query.Set("ref", ref)
+	}
+	path := githubContentAPIPath(owner, repo, file.Path)
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var response githubContentResponse
+	if err := a.getJSON(path, &response); err != nil {
+		return githubReadFile{}, err
+	}
+	if strings.TrimSpace(response.Content) == "" {
+		return githubReadFile{}, fmt.Errorf("github content response did not include file content")
+	}
+	if response.Encoding != "" && response.Encoding != "base64" {
+		return githubReadFile{}, fmt.Errorf("github content response used unsupported encoding %q", response.Encoding)
+	}
+	content, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(response.Content, "\n", ""))
+	if err != nil {
+		return githubReadFile{}, fmt.Errorf("decode github file content: %w", err)
+	}
+	sourceURL := response.HTMLURL
+	if sourceURL == "" {
+		sourceURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", owner, repo, firstNonEmpty(ref, "HEAD"), file.Path)
+	}
+	return githubReadFile{
+		Path:      file.Path,
+		Ref:       ref,
+		SHA:       response.SHA,
+		Content:   string(content),
+		SourceURL: sourceURL,
+	}, nil
 }
 
 func (a GitHubAdapter) pullRequestHeadSHA(owner string, repo string, prNumber int) (string, error) {
@@ -1192,6 +1312,118 @@ func withoutEmptyMap(value map[string]any) map[string]any {
 	return result
 }
 
+func githubRunbookPathsArg(args map[string]any, owner string, repo string, defaultRef string) []githubRunbookPath {
+	values := []string{}
+	for _, key := range []string{"runbooks", "paths", "doc_paths"} {
+		values = append(values, stringSliceArg(args, key)...)
+	}
+	if path, ok := stringArg(args, "path"); ok {
+		values = append(values, path)
+	}
+	seen := map[string]bool{}
+	paths := []githubRunbookPath{}
+	for _, value := range values {
+		path, ref, ok := githubRunbookPathFromValue(value, owner, repo)
+		if !ok {
+			continue
+		}
+		ref = firstNonEmpty(ref, defaultRef)
+		key := path + "@" + ref
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		paths = append(paths, githubRunbookPath{Path: path, Ref: ref})
+	}
+	return paths
+}
+
+func githubRunbookPathFromValue(value string, owner string, repo string) (string, string, bool) {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return "", "", false
+	}
+	if strings.HasPrefix(text, "github.com/") {
+		text = "https://" + text
+	}
+	if parsed, err := url.Parse(text); err == nil && parsed.Scheme != "" && strings.EqualFold(parsed.Host, "github.com") {
+		parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+		if len(parts) >= 5 && parts[2] == "blob" && strings.EqualFold(parts[0], owner) && strings.EqualFold(parts[1], repo) {
+			return strings.Join(parts[4:], "/"), parts[3], true
+		}
+		return "", "", false
+	}
+	if index := strings.IndexAny(text, "?#"); index >= 0 {
+		text = text[:index]
+	}
+	file, err := newGitHubFileChange(text, "")
+	if err != nil {
+		return "", "", false
+	}
+	return file.Path, "", true
+}
+
+func scoreGitHubRunbook(query string, content string) (int, string) {
+	terms := queryTerms(query)
+	lower := strings.ToLower(content)
+	score := 1
+	firstMatch := -1
+	for _, term := range terms {
+		count := strings.Count(lower, term)
+		score += count
+		if firstMatch == -1 {
+			if index := strings.Index(lower, term); index >= 0 {
+				firstMatch = index
+			}
+		}
+	}
+	return score, runbookSnippet(content, firstMatch)
+}
+
+func queryTerms(query string) []string {
+	seen := map[string]bool{}
+	terms := []string{}
+	for _, term := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if len(term) < 3 || seen[term] {
+			continue
+		}
+		seen[term] = true
+		terms = append(terms, term)
+	}
+	return terms
+}
+
+func runbookSnippet(content string, index int) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	start := 0
+	if index > 120 {
+		start = index - 120
+	}
+	end := start + 600
+	if end > len(content) {
+		end = len(content)
+	}
+	return compactWhitespace(content[start:end])
+}
+
+func compactWhitespace(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func markdownTitle(content string, fallback string) string {
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			return strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		}
+	}
+	return fallback
+}
+
 func intArg(args map[string]any, key string) (int, error) {
 	value, ok := args[key]
 	if !ok {
@@ -1514,5 +1746,11 @@ func GitHubProviderOverrides() map[string]string {
 func GitHubDeployProviderOverrides() map[string]string {
 	return map[string]string{
 		"deploy.get_recent_deploys": GitHubProvider,
+	}
+}
+
+func GitHubDocsProviderOverrides() map[string]string {
+	return map[string]string{
+		"docs.search_runbooks": GitHubProvider,
 	}
 }
